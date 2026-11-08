@@ -1,0 +1,26 @@
+# Push a tag like v0.6.0 → build the universal DMG on a Mac runner and attach it to that GitHub release.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  dmg:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the DMG
+        run: bash build.sh --dmg
+      - name: Attach it to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "GLORIA $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GLORIA-dmg
+          path: dist/*.dmg

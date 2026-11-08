@@ -361,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let r = setLogin((m["on"] as? Bool) ?? true)
             return ["result": r, "status": SMAppService.mainApp.status.rawValue, "path": Bundle.main.bundlePath]
         case "pointer": for p in pets { p.fakePointer = (CGPoint(x: num("x", 0), y: num("y", 0)), now() + num("seconds", 3)) }
+        case "hit": return ["hit": pet.body.hits(CGPoint(x: num("x", 0), y: num("y", 0)), pet.sprites)]
         case "play":
             if let a = Anim(rawValue: m["anim"] as? String ?? "") { pet.play(a, loops: Int(num("loops", 2))) }
         case "sleep": pet.forceSleepUntil = now() + num("seconds", 10)
@@ -437,7 +438,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ctx.restoreGState()
         }
         for p in pets {
+            p.body.beginCapture()
             put(p.body.panel, p.body.view.layer)
+            p.body.endCapture()
             if p.bubble.visible, let rep = p.bubble.view.bitmapImageRepForCachingDisplay(in: p.bubble.view.bounds) {
                 p.bubble.view.cacheDisplay(in: p.bubble.view.bounds, to: rep)
                 if let img = rep.cgImage {

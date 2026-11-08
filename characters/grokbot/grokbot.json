@@ -1,8 +1,8 @@
 {
  "id": "grokbot",
  "name": "GrokBot",
- "source": "Blender: grokbot_transform_v6.blend (frame 650 pose) via render_grokbot.py",
- "sheet": "grokbot.png",
+ "source": "real 3D model: the author's Blender project (frame 650 of grokbot_transform_v6) exported by export_grokbot.py, drawn live with SceneKit",
+ "model": "grokbot.usdz",
  "cell": [
   192,
   208
@@ -13,8 +13,10 @@
   96,
   96
  ],
+ "top": 36,
  "look": true,
  "scale": 1.2,
+ "note": "Rows/counts/timings drive the app's state machine; each (row, frame) is turned into a pose in Sources/Model3D.swift (GrokPoses).",
  "anims": {
   "tap": {
    "row": 0,

@@ -14,6 +14,13 @@ final class Sprites {
     private var masks: [Cell: [UInt8]] = [:]
     private var tops: [Cell: Int] = [:]
     private(set) var rows = 0
+    private var fixedTop: Int?
+
+    /// No pictures: a 3D pet keeps the same row layout for its state machine and draws itself.
+    init(blankRows: Int, top: Int) {
+        rows = blankRows
+        fixedTop = top
+    }
 
     init?(url: URL) {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
@@ -47,7 +54,7 @@ final class Sprites {
     }
 
     /// Top of the drawing in a cell (px from the cell's top), for placing the speech bubble.
-    func top(_ c: Cell) -> Int { tops[c] ?? 6 }
+    func top(_ c: Cell) -> Int { tops[c] ?? fixedTop ?? 6 }
 
     func image(_ c: Cell) -> CGImage? { images[c] ?? images[Cell(row: 0, col: 0)] }
 

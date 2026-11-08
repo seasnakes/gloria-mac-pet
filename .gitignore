@@ -8,3 +8,6 @@ __pycache__/
 
 # GrokBot raw 2x renders (rebuild with characters/grokbot/render_grokbot.py)
 characters/grokbot/frames/
+
+# Installer output (bash build.sh --dmg)
+dist/

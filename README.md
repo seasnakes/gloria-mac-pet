@@ -7,9 +7,10 @@
 **住在窗口上的小伙伴。她们会坐在窗沿上、跟着音乐跳舞，<br>还会把 Claude Code 和 Codex 正在干的活——包括操作你的电脑——演给你看。**
 
 <a href="#安装"><img src="https://img.shields.io/badge/macOS-14.2%2B-ff9ec8?style=flat-square&logo=apple&logoColor=white" alt="macOS 14.2+"></a>
-<img src="https://img.shields.io/badge/Apple%20Silicon-native-b9a7f0?style=flat-square" alt="Apple Silicon">
-<img src="https://img.shields.io/badge/Swift-AppKit-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
-<img src="https://img.shields.io/badge/version-0.5.0-7fd3f5?style=flat-square" alt="v0.5.0">
+<img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-b9a7f0?style=flat-square" alt="Apple Silicon + Intel">
+<img src="https://img.shields.io/badge/Swift-AppKit%20%2B%20SceneKit-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
+<a href="https://github.com/seasnakes/gloria-mac-pet/releases/latest"><img src="https://img.shields.io/badge/下载-DMG-7fd3f5?style=flat-square" alt="下载 DMG"></a>
+<img src="https://img.shields.io/badge/version-0.6.0-7fd3f5?style=flat-square" alt="v0.6.0">
 <img src="https://img.shields.io/badge/联网-不需要-8fd19e?style=flat-square" alt="不联网">
 <a href="LICENSE"><img src="https://img.shields.io/badge/代码-MIT-f7c873?style=flat-square" alt="代码 MIT"></a><br>
 <a href="#claude-code--codex两个化身互相传话"><img src="https://img.shields.io/badge/Claude%20Code-化身-D97757?style=flat-square&logo=claude&logoColor=white" alt="Claude Code"></a>
@@ -22,38 +23,50 @@
 
 <img src="https://count.getloli.com/@seasnakes-gloria-mac-pet?name=seasnakes-gloria-mac-pet&theme=cat-girls-yay&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="浏览量">
 
-<img src="docs/hero.gif" width="780" alt="蓝毛小女仆、Doro、GLORIA、乌萨奇、GrokBot 站在窗口上跟着音乐跳舞">
+<img src="docs/hero.gif" width="720" alt="Doro、GLORIA、乌萨奇站在窗口上跟着音乐跳舞">
 
 </div>
 
 ---
 
-## 五个角色，可以同时放出来
+## 四个角色，可以同时放出来
 
-<img src="docs/cast.png" width="820" alt="五个角色的主要动作：站着、坐窗沿、思考、等批准、跳舞、打盹、被拎起来、看光标">
+<img src="docs/cast.png" width="820" alt="三个手绘角色的主要动作：站着、坐窗沿、思考、等批准、跳舞、打盹、被拎起来、看光标">
 
 | 角色 | 素材 | 做法 |
 | --- | --- | --- |
 | **GLORIA · 柔彩** | 已验收的 Q 版手绘帧 | 新姿势用同一条 image_gen 流程逐帧画；跳舞、思考和操作电脑的过渡帧是光流推出来的，不叠影，每个像素都来自原画 |
-| **Doro** | 本机 DoroPet-macos（基于 [DoroPet](https://github.com/waterfeet/DoroPet_V3)）的站立版 | Live2D 头 + 程序绘制的身体，离屏逐帧渲染；待机带呼吸、轻微摇头和眨眼，操作电脑时拿着欧润吉笔记本和相机 |
+| **Doro** | 本机 DoroPet-macos（基于 [DoroPet](https://github.com/waterfeet/DoroPet_V3)）的站立版 | Live2D 头 + 程序绘制的身体，离屏逐帧渲染；待机带呼吸、轻微摇头和眨眼，操作电脑时敲键盘、举相机 |
 | **抽象乌萨奇** | 一张毛绒照片 | Animated Drawings：骨骼绑定 + ARAP 网格，动作来自 BVH 重定向和关节角 |
-| **GrokBot** | 作者自己的 Blender 工程（变形短片的完成造型） | 用 Cycles 逐帧渲染：耳朵天线、鳍手、九种 LED 表情、悬浮环和短片里的 3D 光标都是模型本身的部件 |
-| **蓝毛小女仆** | [dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT） | 从它的透明动画里截取每个状态的片段，换算到同一套格子，见[下文](#dsh-pet-适配) |
+| **GrokBot（3D）** | 作者的 Blender 工程（变形短片的完成造型） | 真正的 3D 模型，见[下文](#grokbot真的-3d) |
 
 菜单「角色」里勾选谁出场。几个角色站在一起时会互相打招呼，不会叠在同一个位置。
 
+## GrokBot：真的 3D
+
+<img src="docs/grokbot-3d.gif" width="340" alt="GrokBot 转身看着绕圈的光标，然后点击、在全息键盘上打字、截图、跳舞">
+
+GrokBot 不是一张精灵图，而是从 Blender 导出的 USDZ 模型，App 用 SceneKit 每帧实时渲染进它自己的透明窗口：
+
+- **真的会转身**：看光标时整个身体按光标的确切方向转过去，不是在 16 张预先画好的朝向之间切换。
+- **身体部件分开动**：耳朵天线、鳍手、九种 LED 表情、悬浮环和短片里的 3D 光标，都是模型本身的部件，由 App 实时摆动。姿势之间平滑过渡，不跳帧。
+- **和其他角色一样**：坐窗沿、拎起来甩、跳舞、当 agent 化身、操作电脑，用的是同一套状态。
+- **点击判断**：直接用射线检测 3D 几何体，点在它身上才会被拦住。
+
+模型由 `characters/grokbot/export_grokbot.py` 从工程里导出：取完成造型那一帧，保留各部件的轴心，烘焙修改器。
+
 ## Computer use：她替 agent 动手
 
-<img src="docs/computer-use.gif" width="760" alt="Codex 操作 Chrome：Doro 举相机截图、抱着笔记本打字、拖着光标划过去，点到的地方泛起波纹">
+<img src="docs/computer-use.gif" width="760" alt="Codex 操作 Chrome：Doro 举相机截图、敲键盘打字、拖着光标划过去，点到的地方泛起波纹">
 
 Agent 操作你的电脑时，它的化身会跟着「动手」：
 
 - **走到正在被操作的窗口上**：能站上去就跳到那个窗口顶上；窗口铺满屏幕时，就沿着屏幕底部走到对应位置的旁边。
-- **按动作换姿势**：点击时伸手点、打字时抱着小笔记本敲、截图时举相机、拖拽时拽着光标走、滚动时往下划。目标在另一边时，姿势会镜像过去。
+- **按动作换姿势**：点击时伸手点、打字时敲键盘、截图时举相机、拖拽时拽着光标走、滚动时往下划。目标在另一边时，姿势会镜像过去。
 - **标出落点**：点到的地方泛起波纹，双击是两圈；截图时窗口闪一下，四角出现取景框；拖拽时画出一条虚线。
 - **头顶小字幕**：显示「Google Chrome：点一下」「按 ⌘⇧T」这样的说明。打字只显示字数，不显示内容，所以密码不会出现在气泡里。
 
-<img src="docs/computer-use.png" width="620" alt="五个角色的操作电脑姿势：点击、打字、截图、拖拽、滚动">
+<img src="docs/computer-use.png" width="620" alt="三个手绘角色的操作电脑姿势：点击、打字、截图、拖拽、滚动（GrokBot 的见上面的 3D 动图）">
 
 能识别的调用：
 
@@ -85,7 +98,7 @@ python3 tools/import_dsh.py <dsh-pet 素材目录> --id <名字> --install
 - **转换方式**：每个状态截取一段、抽帧、缩放到同一条脚底线，并清掉视频透明通道里的底噪。
 - **装进 App**：`--install` 把结果放进 `~/Library/Application Support/GLORIA/characters/<名字>/`。重开 GLORIA 后，它会出现在「角色」和两个「化身」菜单里。
 
-内置的「蓝毛小女仆」就是这样从 dsh-pet 主角色转来的，原作的 MIT 许可在 `characters/dsh/NOTICE.txt`。
+转换结果旁边会附上 dsh-pet 的 MIT 许可（`NOTICE.txt`）。
 
 ## 她们还会
 
@@ -102,9 +115,23 @@ python3 tools/import_dsh.py <dsh-pet 素材目录> --id <名字> --install
 
 ## 安装
 
+**下载 DMG**：在 [Releases](https://github.com/seasnakes/gloria-mac-pet/releases/latest) 下载 `GLORIA-<版本>.dmg`，打开后把 GLORIA 拖进「应用程序」。需要 macOS 14.2 或更新，Apple Silicon 和 Intel 都能用。
+
+第一次打开时 macOS 会拦下来，因为这个版本没有经过 Apple 公证。放行一次就好：
+
+1. 先双击打开一次，再到「系统设置 › 隐私与安全性」，在下方点「仍要打开」；
+2. 或者在终端运行 `xattr -dr com.apple.quarantine /Applications/GLORIA.app`。
+
+macOS 14 也可以在「应用程序」里右键 GLORIA →「打开」。
+
+**从源码构建**（需要 Xcode 或 Command Line Tools，不需要别的依赖）：
+
 ```bash
-bash build.sh --install     # 构建并装进 /Applications，然后启动（需要 Xcode 或 Command Line Tools）
+make install    # = bash build.sh --install：构建、装进 /Applications 并启动
+make dmg        # = bash build.sh --dmg：做出 dist/GLORIA-<版本>.dmg（arm64 + x86_64）
 ```
+
+有 Apple Developer ID 的话，设上 `SIGN_ID="Developer ID Application: …"`，DMG 里的 App 就会用它签名。再设 `NOTARY_PROFILE` 还会公证 DMG，别人打开时就不会再被拦。推送 `v*` 标签时，GitHub Actions（`.github/workflows/release.yml`）会自动构建 DMG，并挂到对应的 Release 上。
 
 她们不占 Dock。菜单栏里有一排出场角色的小头像，右键角色本人也能打开同一个菜单。找不到她们时点「叫她们过来」。开机自启在菜单里的「登录时启动」。
 
@@ -137,7 +164,7 @@ bash build.sh --install     # 构建并装进 /Applications，然后启动（需
 X=/Applications/GLORIA.app/Contents/MacOS/GLORIA
 $X --hooks claude on|off                                  # 同菜单开关
 $X --ctl '{"ctl":"status"}'                               # 所有角色的状态（JSON）
-$X --ctl '{"ctl":"show","id":"grokbot","on":true}'        # 放出 / 收起角色：gloria / doro / usagi / grokbot / dsh / 导入的名字
+$X --ctl '{"ctl":"show","id":"grokbot","on":true}'        # 放出 / 收起角色：gloria / doro / usagi / grokbot / 导入的名字
 $X --ctl '{"ctl":"role","source":"codex","id":"doro"}'    # 指定化身
 $X --ctl '{"ctl":"cua"}'                                  # 演示 Codex 操作电脑
 $X --ctl '{"ctl":"together"}'                             # 演示 Claude 请 Codex 帮忙
@@ -169,16 +196,17 @@ $X --ctl '{"ctl":"menu"}'                                 # 打印菜单
 python3 tools/gloria_sheet.py                                  # GLORIA：原画 + 平滑思考/舞蹈/操作电脑（需要 OpenCV）
 DOROPET=~/Developer/DoroPet-macos $DOROPET_PYTHON characters/doro/render_doropet.py   # Doro（live2d-py + PyQt5）
 $ANIMATED_DRAWINGS/.venv/bin/python characters/usagi/ad_usagi.py --build              # 乌萨奇（Animated Drawings）
-/Applications/Blender.app/Contents/MacOS/Blender -b <grokbot_transform_v6.blend> --python characters/grokbot/render_grokbot.py
-python3 characters/grokbot/pack_grokbot.py                     # GrokBot
-python3 tools/import_dsh.py <dsh-pet>/dsh-pet/assets           # 蓝毛小女仆
-python3 tools/readme_media.py [截图帧目录]                       # 这份 README 里的图
-bash build.sh
+/Applications/Blender.app/Contents/MacOS/Blender -b <grokbot_transform_v6.blend> --python characters/grokbot/export_grokbot.py   # GrokBot → grokbot.usdz
+python3 tools/make_icon.py                                     # App 图标 → Resources/GLORIA.icns
+python3 tools/readme_media.py [--cua 帧目录 框] [--grok3d 帧目录 框]   # 这份 README 里的图
+make app
 ```
 
 `DOROPET` 指向本机的 DoroPet-macos 目录（[DoroPet](https://github.com/waterfeet/DoroPet_V3) 的 macOS 版，默认 `~/Developer/DoroPet-macos`）；`ANIMATED_DRAWINGS` 指向 [AnimatedDrawings](https://github.com/facebookresearch/AnimatedDrawings) 的本地副本（默认 `~/Developer/animated-drawings-local`）。只是使用已经生成好的精灵图的话，这些都不需要。
 
-所有角色都用同一套格子：8 列、每格 192×208、脚踩 y=202，第 9–10 行是 16 个看的方向。动作的行号、帧数、每帧时长、锚点和朝向（`facing`）写在各自的 `<id>.json` 里，长动作可以跨行。
+所有角色都用同一套格子：8 列、每格 192×208、脚踩 y=202，第 9–10 行是 16 个看的方向。动作的行号、帧数、每帧时长、锚点和朝向（`facing`）写在各自的 `<id>.json` 里，长动作可以跨行。GrokBot 的 JSON 用同样的行号和帧数，只是不对应图片，而是对应 `Sources/Model3D.swift` 里的姿势。
+
+<b>目录</b>：`Sources/` 是 App 代码，`Resources/` 放图标、Info.plist 模板和 DMG 里的说明，`characters/<id>/` 放每个角色的成品和生成脚本，`tools/` 放工具脚本，`docs/` 放 README 用的图，`VERSION` 是版本号。
 
 </details>
 
@@ -191,6 +219,7 @@ bash build.sh
 - Claude/Codex 工作或等批准时，她们站着演，不坐也不睡。
 - Dock 放大的抬升是按放大曲线估算的，不读取 Dock 里真实的图标位置（那需要辅助功能权限）。
 - 窗口顶边离菜单栏太近时放不下她们，这时她们会站在屏幕底部。
+- GrokBot 是实时 3D 渲染，放出来时 App 大约多用 5–8% 的 CPU（每秒最多画 30 帧，过渡靠插值）。
 - 多显示器按逻辑支持，只在一台外接屏上试过。
 
 </details>
@@ -204,8 +233,7 @@ bash build.sh
 | GLORIA · 柔彩 | 作者的原创角色 | 精灵图保留所有权利 |
 | Doro | [DoroPet](https://github.com/waterfeet/DoroPet_V3)（Apache-2.0）自带的 Live2D Doro 模型，离屏渲染成帧 | Doro 是网络同人形象；本仓库只含渲染出的图，不含模型文件 |
 | 抽象乌萨奇 | 一张乌萨奇（《ちいかわ》，©ナガノ）毛绒玩偶的照片 | 同人二创，仅供个人非商业使用 |
-| GrokBot | 作者的 Blender 工程 | 机身上的标志是 xAI 的 Grok 标志 |
-| 蓝毛小女仆 | [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 的透明动画 | MIT，原许可见 `characters/dsh/NOTICE.txt` |
+| GrokBot | 作者的 Blender 工程，导出为 3D 模型（`grokbot.usdz`） | 机身上的标志是 xAI 的 Grok 标志 |
 
 ## Star History
 

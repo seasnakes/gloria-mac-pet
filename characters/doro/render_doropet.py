@@ -122,12 +122,27 @@ def draw_props(widget, props, y):
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(ORANGE, 5)); p.drawEllipse(QPointF(x, yy), r, r)
             p.setPen(QPen(INK, 3)); p.drawEllipse(QPointF(x, yy), r * 0.55, r * 0.55)
-        elif kind == "laptop":                     # back of the lid + the deck, screen facing Doro
-            p.setPen(pen()); p.setBrush(QColor("#eceaf2"))
-            p.drawRoundedRect(QRectF(218, 368, 154, 82), 12, 12)
-            p.setBrush(QColor("#d9d6e2")); p.drawRoundedRect(QRectF(204, 446, 182, 14), 6, 6)
-            p.setPen(pen(3)); p.setBrush(ORANGE); p.drawEllipse(QPointF(295, 405), 15, 15)
-            p.setBrush(LEAF); p.drawEllipse(QRectF(296, 380, 13, 8))
+        elif kind == "keyboard":                   # a low keyboard seen from above-front, slightly turned; pressed keys glow
+            hot, tilt = a
+            def at(u, v):                          # keyboard plane: u across (0..1), v front-to-back (0..1)
+                x0, x1 = 206 + 10 * v, 362 - 10 * v
+                y = 416 - 30 * v + tilt * (u - 0.5) * 2
+                return QPointF(x0 + (x1 - x0) * u, y)
+            deck = QPolygonF([at(0, 0), at(1, 0), at(1, 1), at(0, 1)])
+            side = QPolygonF([at(0, 0), at(1, 0), at(1, 0) + QPointF(0, 9), at(0, 0) + QPointF(0, 9)])
+            p.setPen(pen()); p.setBrush(QColor("#c9c4d6")); p.drawPolygon(side)
+            p.setBrush(QColor("#f1eff6")); p.drawPolygon(deck)
+            p.setPen(pen(2.5))
+            for r, n in enumerate((10, 10, 8)):
+                for c in range(n):
+                    u0 = 0.06 + (c + (r == 2) * 1) * 0.088; v0 = 0.12 + r * 0.28
+                    q = QPolygonF([at(u0, v0), at(u0 + 0.07, v0), at(u0 + 0.07, v0 + 0.2), at(u0, v0 + 0.2)])
+                    p.setBrush(ORANGE if (r, c) in hot else QColor("#ffffff")); p.drawPolygon(q)
+        elif kind == "mouse":                      # a little mouse beside the keyboard
+            x, yy = a
+            p.setPen(pen()); p.setBrush(QColor("#ffffff")); p.drawEllipse(QRectF(x - 15, yy - 20, 30, 40))
+            p.setPen(pen(3)); p.drawLine(QPointF(x, yy - 20), QPointF(x, yy - 4))
+            p.setBrush(ORANGE); p.drawRoundedRect(QRectF(x - 3, yy - 15, 6, 9), 3, 3)
         elif kind == "paw":                        # a paw resting on something in front of her
             x, yy = a
             p.setPen(pen()); p.setBrush(QColor("#ffffff")); p.drawEllipse(QPointF(x, yy), 16, 13)
@@ -320,13 +335,16 @@ for i in range(8):
     put(CU_ROW, i, action="idle", t=i * .12, pose=P(arm_left=th), props=props,
         params={"ParamAngleX": -16 * reach, "ParamAngleY": 4 * reach, "ParamEyeSmile": 1 if press else 0,
                 "ParamMouthOpenY": 0.7 if press else 0.15})
-# type: little laptop (orange 欧润吉 on the lid), paws tapping on the deck, head down.
+# type: a low keyboard (and a mouse) in front of her, slightly turned; paws come down on the keys from above, so her
+# arms never pass through anything. Head down and a little to the side, looking at the keys.
+TYPE_HOT = [{(1, 2)}, {(0, 7)}, {(1, 5)}, {(2, 3)}, {(0, 2)}, {(1, 7)}, {(2, 5)}, {(0, 5)}]
 for i in range(8):
-    up_l, up_r = (10, 0) if i % 2 == 0 else (0, 10)
+    up_l, up_r = (12, 0) if i % 2 == 0 else (0, 12)
     blink = 0 if i == 5 else 1
-    put(CU_ROW + 1, i, action="idle", t=i * .15, pose=P(arm_left=-38, arm_right=-38, y=1.2 * S(i / 8 * TAU)),
-        props=[("laptop",), ("paw", 232, 446 - up_l), ("paw", 358, 446 - up_r)],
-        params={"ParamAngleY": -14, "ParamAngleX": 6 * S(i / 8 * TAU), "ParamEyeLOpen": blink, "ParamEyeROpen": blink,
+    lx, ly = tip(-30); rx, ry = tip(-30, right=True)
+    put(CU_ROW + 1, i, action="idle", t=i * .15, pose=P(arm_left=-30, arm_right=-30, y=1.2 * S(i / 8 * TAU)),
+        props=[("keyboard", TYPE_HOT[i], 6), ("mouse", 392, 404), ("paw", lx + 2, ly + 6 - up_l), ("paw", rx - 2, ry + 6 - up_r)],
+        params={"ParamAngleY": -16, "ParamAngleX": 9 + 4 * S(i / 8 * TAU), "ParamAngleZ": -4, "ParamEyeLOpen": blink, "ParamEyeROpen": blink,
                 "ParamMouthOpenY": 0.25 if i % 2 else 0.05})
 # snap: orange camera up by her face, a wink, the flash on the click.
 for i in range(8):

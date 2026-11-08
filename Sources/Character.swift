@@ -39,13 +39,15 @@ final class Character {
     let grab: CGPoint
     let scaleMul: CGFloat
     let lines: Lines
+    /// A real 3D model, drawn live (nil for sprite-sheet pets).
+    let model: Model3D?
     private var owner: [Cell: Anim] = [:]
 
     struct Lines { let greeting: String; let pats, wake, ouch, angry, hello: [String] }
 
     init(id: String, name: String, tag: String, sprites: Sprites, specs: [Anim: AnimSpec], feetY: CGFloat, seatY: CGFloat,
-         grab: CGPoint, scaleMul: CGFloat, lines: Lines) {
-        self.id = id; self.name = name; self.tag = tag; self.sprites = sprites; self.specs = specs
+         grab: CGPoint, scaleMul: CGFloat, lines: Lines, model: Model3D? = nil) {
+        self.id = id; self.name = name; self.tag = tag; self.sprites = sprites; self.specs = specs; self.model = model
         self.feetY = feetY; self.seatY = seatY; self.grab = grab; self.scaleMul = scaleMul; self.lines = lines
         for (a, s) in specs { for i in 0..<s.count { owner[cell(a, i)] = owner[cell(a, i)] ?? a } }
     }
@@ -55,7 +57,19 @@ final class Character {
     /// From the feet line up to the grab point, in cell px.
     var hang: CGFloat { feetY - grab.y }
     /// Whether the sheet has the extra rows (perch, dance, sleep, dangle).
-    var hasExtras: Bool { specs[.dangle] != nil && sprites.has(cell(.dangle, 0)) }
+    var hasExtras: Bool { specs[.dangle] != nil && (model != nil || sprites.has(cell(.dangle, 0))) }
+
+    /// The 3D pose for a cell the state machine picked. Look cells use the exact angle when it's the one being shown.
+    func pose3D(for c: Cell, look: Double) -> Pose3D {
+        if c.row == 9 || c.row == 10 {
+            let deg = Double((c.row - 9) * 8 + c.col) * 22.5
+            var d = (look - deg).truncatingRemainder(dividingBy: 360)
+            if d > 180 { d -= 360 } else if d < -180 { d += 360 }
+            return GrokPoses.pose(nil, 0, look: abs(d) <= 11.25 ? look : deg)
+        }
+        guard let a = owner[c], let s = specs[a] else { return GrokPoses.pose(.idle, 0, look: look) }
+        return GrokPoses.pose(a, (c.row - s.row) * 8 + c.col, look: look)
+    }
 
     func spec(_ a: Anim) -> AnimSpec { specs[a] ?? specs[.idle]! }
     func has(_ a: Anim) -> Bool { specs[a] != nil }
@@ -95,7 +109,7 @@ final class Character {
     /// Which animation a cell belongs to (for "is she sitting?").
     func anim(of c: Cell) -> Anim? { owner[c] }
 
-    static let builtIn = ["gloria", "doro", "usagi", "grokbot", "dsh"]
+    static let builtIn = ["gloria", "doro", "usagi", "grokbot"]
     /// Imported pets: Application Support/GLORIA/characters/<id>/<id>.json + <id>.png.
     static var userDir: URL { Paths.support.appendingPathComponent("characters", isDirectory: true) }
 
@@ -116,12 +130,17 @@ final class Character {
     }
     static func rescan() { scanned = nil; metaCache.removeAll() }
 
+    /// A pet's JSON and its art: a sprite sheet (<id>.png) or a 3D model (<id>.usdz).
     private static func files(_ id: String) -> (json: URL, png: URL)? {
         let fm = FileManager.default
         let user = userDir.appendingPathComponent(id, isDirectory: true)
-        let uj = user.appendingPathComponent("\(id).json"), up = user.appendingPathComponent("\(id).png")
-        if fm.fileExists(atPath: uj.path), fm.fileExists(atPath: up.path) { return (uj, up) }
-        if let j = Bundle.main.url(forResource: id, withExtension: "json"), let p = Bundle.main.url(forResource: id, withExtension: "png") { return (j, p) }
+        let uj = user.appendingPathComponent("\(id).json")
+        for ext in ["png", "usdz"] {
+            let up = user.appendingPathComponent("\(id).\(ext)")
+            if fm.fileExists(atPath: uj.path), fm.fileExists(atPath: up.path) { return (uj, up) }
+        }
+        guard let j = Bundle.main.url(forResource: id, withExtension: "json") else { return nil }
+        if let p = Bundle.main.url(forResource: id, withExtension: "png") ?? Bundle.main.url(forResource: id, withExtension: "usdz") { return (j, p) }
         return nil
     }
 
@@ -139,7 +158,17 @@ final class Character {
     }
 
     static func load(_ id: String) -> Character? {
-        guard let f = files(id), let m = meta(id), let sp = Sprites(url: f.png) else { return nil }
+        guard let f = files(id), let m = meta(id) else { return nil }
+        var model: Model3D?
+        let sp: Sprites
+        if f.png.pathExtension == "usdz" {
+            guard let md = Model3D(url: f.png) else { return nil }
+            model = md
+            sp = Sprites(blankRows: 24, top: (m["top"] as? Int) ?? 36)
+        } else {
+            guard let s = Sprites(url: f.png) else { return nil }
+            sp = s
+        }
         var specs: [Anim: AnimSpec] = [:]
         for (k, v) in m["anims"] as? [String: [String: Any]] ?? [:] {
             guard let a = Anim(rawValue: k), let row = v["row"] as? Int, let n = v["count"] as? Int, n > 0 else { continue }
@@ -164,7 +193,7 @@ final class Character {
                           ouch: list("ouch", lines.ouch), angry: list("angry", lines.angry), hello: list("hello", lines.hello))
         }
         return Character(id: id, name: name, tag: tag, sprites: sp, specs: specs, feetY: num("feetY", 202), seatY: num("seatY", 149),
-                         grab: g, scaleMul: mul * num("scale", 1), lines: lines)
+                         grab: g, scaleMul: mul * num("scale", 1), lines: lines, model: model)
     }
 
     private static func persona(_ id: String) -> (String, String, CGFloat, Lines) {
@@ -202,10 +231,16 @@ final class Character {
 
     /// Menu bar icon: the top of the idle frame (the face).
     func icon(size: CGFloat) -> NSImage? {
+        if let model {
+            // The face of the 3D model: render the resting pose and crop around the round body.
+            guard let img = model.snapshot(GrokPoses.pose(.idle, 0, look: 90), size: CGSize(width: Sprites.cellW * 2, height: Sprites.cellH * 2)),
+                  let c = img.cropping(to: CGRect(x: 48 * 2, y: 88 * 2, width: 96 * 2, height: 90 * 2)) else { return nil }
+            return NSImage(cgImage: c, size: NSSize(width: size * 96 / 90, height: size))
+        }
         guard let img = sprites.image(cell(.idle, 0)) else { return nil }
         let top = CGFloat(sprites.top(cell(.idle, 0)))
-        let h = id == "usagi" ? 100.0 : id == "grokbot" ? 74.0 : (feetY - top) * 0.62
-        let y = id == "usagi" ? top + 22 : id == "grokbot" ? top + 52 : top
+        let h = id == "usagi" ? 100.0 : (feetY - top) * 0.62
+        let y = id == "usagi" ? top + 22 : top
         let w = h * 1.08
         guard let c = img.cropping(to: CGRect(x: 96 - w / 2, y: y, width: w, height: h)) else { return nil }
         return NSImage(cgImage: c, size: NSSize(width: size * w / h, height: size))

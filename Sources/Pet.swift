@@ -22,6 +22,10 @@ final class Body {
     let fx = CALayer()
     private(set) var scale: CGFloat
     private var shown: Cell?
+    // A 3D pet draws into a Metal layer inside the sprite layer, so turning, squashing and swinging apply to it too.
+    private(set) var model: Model3D?
+    private var metal: CAMetalLayer?
+    private(set) var pose = Pose3D()
 
     var spriteSize: CGSize { CGSize(width: CGFloat(Sprites.cellW) * scale, height: CGFloat(Sprites.cellH) * scale) }
     /// Room under her feet: sitting on a window edge, her legs hang over the front of the window.
@@ -51,7 +55,54 @@ final class Body {
         sprite.bounds = CGRect(origin: .zero, size: spriteSize)
         sprite.position = CGPoint(x: winSize.width / 2, y: footInset)
         fx.frame = CGRect(origin: .zero, size: winSize)
+        if let m = metal {
+            let k = NSScreen.main?.backingScaleFactor ?? 2
+            m.frame = sprite.bounds
+            m.contentsScale = k
+            m.drawableSize = CGSize(width: (spriteSize.width * k).rounded(), height: (spriteSize.height * k).rounded())
+        }
         CATransaction.commit()
+    }
+
+    /// Give this body a 3D model to draw instead of sheet cells.
+    func attach(_ m: Model3D) {
+        model = m
+        let l = CAMetalLayer()
+        l.device = Model3D.device
+        l.pixelFormat = .bgra8Unorm_srgb
+        l.isOpaque = false
+        l.framebufferOnly = true
+        l.actions = ["bounds": NSNull(), "position": NSNull(), "contents": NSNull()]
+        sprite.addSublayer(l)
+        metal = l
+        resize(scale)
+    }
+
+    /// 3D: ease toward the pose for this cell and draw it — at most 30 times a second (the easing keeps it smooth).
+    private var lastDraw: Double = 0
+    private var pending: CGFloat = 0
+    func show(_ target: Pose3D, cell c: Cell, dt: CGFloat) {
+        guard let model, let metal else { return }
+        shown = c
+        pending += dt
+        let t = now()
+        guard t - lastDraw >= 1.0 / 31 else { return }
+        pose.approach(target, 1 - exp(-Double(pending) / 0.07))
+        pending = 0
+        lastDraw = t
+        model.draw(pose, into: metal)
+    }
+
+    /// For the `scene` self-check: Metal layers don't render into a bitmap, so show a still of the current pose meanwhile.
+    func beginCapture() {
+        guard let model else { return }
+        sprite.contents = model.snapshot(pose, size: CGSize(width: spriteSize.width * 2, height: spriteSize.height * 2))
+        metal?.isHidden = true
+    }
+    func endCapture() {
+        guard model != nil else { return }
+        sprite.contents = nil
+        metal?.isHidden = false
     }
 
     func show(_ c: Cell, _ sprites: Sprites) {
@@ -74,11 +125,13 @@ final class Body {
         sprite.opacity = alpha
     }
 
-    /// Is the screen point on one of her opaque pixels?
-    func hits(_ screen: CGPoint, _ sprites: Sprites) -> Bool {
+    /// Is the screen point on one of her opaque pixels? `as` tests another frame in the same place instead of the one shown.
+    func hits(_ screen: CGPoint, _ sprites: Sprites, as other: Cell? = nil) -> Bool {
         let f = panel.frame
-        guard f.contains(screen), let c = shown, let root = view.layer else { return false }
+        guard f.contains(screen), let root = view.layer else { return false }
         let lp = sprite.convert(CGPoint(x: screen.x - f.minX, y: screen.y - f.minY), from: root)
+        if let model { return model.hits(pose, u: lp.x / spriteSize.width, v: lp.y / spriteSize.height) }
+        guard let c = other ?? shown else { return false }
         let x = Int(lp.x / scale), yTop = Sprites.cellH - 1 - Int(lp.y / scale)
         return sprites.alpha(c, x: x, yTop: yTop) > 40
     }
@@ -166,6 +219,11 @@ final class Pet {
     private var nextIdea = now() + 6
     private var lookUntil: Double = 0
     private var lookDir: Double = 90
+    /// Following the pointer with her eyes, with a short dwell so she doesn't flicker at the edge.
+    private var looking = false
+    private var lookSwitched: Double = 0
+    /// The exact direction she's looking (the sprite sheet rounds it to 16 frames; a 3D model uses it as is).
+    private(set) var lookDeg: Double = 90
     private var jostleUntil: Double = 0
     private var glitchUntil: Double = 0
     private var landSquash: (start: Double, amount: CGFloat)?
@@ -239,7 +297,8 @@ final class Pet {
         self.music = music
         body = Body(scale: CGFloat(Prefs.scale) * ch.scaleMul)
         body.view.pet = self
-        body.show(ch.cell(.idle, 0), sprites)
+        if let m = ch.model { body.attach(m) }
+        display(body, ch.cell(.idle, 0), 1)
         body.panel.ignoresMouseEvents = true
     }
 
@@ -400,7 +459,8 @@ final class Pet {
         let side: CGFloat = clones.count % 2 == 0 ? 1 : -1
         let dist = spriteSize.width * (0.62 + 0.42 * CGFloat(clones.count / 2))
         let c = Clone(id: id, scale: scale * 0.62, target: side * dist)
-        c.body.show(ch.cell(.idle, 0), sprites)
+        if let m = ch.model { c.body.attach(m) }
+        display(c.body, ch.cell(.idle, 0), 1)
         c.body.place(feet: feet)
         c.body.panel.level = body.panel.level
         c.body.panel.alphaValue = 0.88
@@ -1114,9 +1174,14 @@ final class Pet {
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        body.show(cell, sprites)
+        display(body, cell, dt)
         body.pose(rot: rot, sx: sx, sy: sy, dx: dx, lift: lift, alpha: alpha)
         CATransaction.commit()
+    }
+
+    /// Put a frame on a body: a sheet cell, or for a 3D pet the pose that cell stands for.
+    private func display(_ b: Body, _ cell: Cell, _ dt: CGFloat) {
+        if ch.model != nil { b.show(ch.pose3D(for: cell, look: lookDeg), cell: cell, dt: dt) } else { b.show(cell, sprites) }
     }
 
     /// Sitting needs a window edge to hang her legs over. On the Dock or the bottom of the screen she stands.
@@ -1147,13 +1212,17 @@ final class Pet {
     }
 
     private func cursorLook(_ t: Double) -> Cell? {
-        if t < lookUntil { return sprites.look(lookDir) }
+        if t < lookUntil { lookDeg = lookDir; return sprites.look(lookDir) }
         let m = pointer()
         let head = CGPoint(x: feet.x, y: feet.y + spriteSize.height * 0.72)
         let d = hypot(m.x - head.x, m.y - head.y)
-        guard d < 300 * scale / 0.62 + 120, d > spriteSize.width * 0.35, !body.hits(m, sprites) else { return nil }
-        let deg = atan2(Double(m.x - head.x), Double(m.y - head.y)) * 180 / .pi
-        return sprites.look(deg)
+        // Test against her resting silhouette, not the frame on screen: a look frame can swing a hand onto the pointer,
+        // which would send her back to resting, which uncovers the pointer again — she'd twitch between the two.
+        let want = d < 300 * scale / 0.62 + 120 && d > spriteSize.width * 0.35 && !body.hits(m, sprites, as: ch.model == nil ? ch.cell(.idle, 0) : nil)
+        if want != looking && t - lookSwitched > 0.35 { looking = want; lookSwitched = t }
+        guard looking else { return nil }
+        lookDeg = atan2(Double(m.x - head.x), Double(m.y - head.y)) * 180 / .pi
+        return sprites.look(lookDeg)
     }
 
     // MARK: Naps
@@ -1250,7 +1319,7 @@ final class Pet {
             var x = feet.x + c.offset
             if let s = seat { x = clamp(x, s.left + 20, s.right - 20) }
             CATransaction.begin(); CATransaction.setDisableActions(true)
-            c.body.show(cell, sprites)
+            display(c.body, cell, dt)
             c.body.pose(rot: 0, sx: 1, sy: 1, dx: 0, lift: 0, alpha: 1)
             CATransaction.commit()
             c.body.place(feet: CGPoint(x: x, y: feet.y + dockLift))
