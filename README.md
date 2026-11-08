@@ -16,9 +16,9 @@
 <a href="#claude-code--codex两个化身互相传话"><img src="https://img.shields.io/badge/Codex-化身-412991?style=flat-square&logo=openai&logoColor=white" alt="Codex"></a>
 <a href="#computer-use她替-agent-动手"><img src="https://img.shields.io/badge/computer%20use-会演-ff9ec8?style=flat-square" alt="computer use"></a>
 <a href="#dsh-pet-适配"><img src="https://img.shields.io/badge/dsh--pet-兼容-5C6BC0?style=flat-square" alt="dsh-pet 兼容"></a><br>
-<a href="https://github.com/seasnakes/gloria-mac-pet/stargazers"><img src="https://img.shields.io/github/stars/seasnakes/gloria-mac-pet?style=flat-square&logo=github&color=ff9ec8" alt="stars"></a>
-<a href="https://github.com/seasnakes/gloria-mac-pet/commits/main"><img src="https://img.shields.io/github/last-commit/seasnakes/gloria-mac-pet?style=flat-square&color=b9a7f0" alt="last commit"></a>
-<img src="https://img.shields.io/github/repo-size/seasnakes/gloria-mac-pet?style=flat-square&color=7fd3f5" alt="repo size">
+<a href="https://github.com/seasnakes/gloria-mac-pet/stargazers"><img src="https://img.shields.io/github/stars/seasnakes/gloria-mac-pet?style=flat-square&logo=github&color=ff9ec8&cacheSeconds=3600" alt="stars"></a>
+<a href="https://github.com/seasnakes/gloria-mac-pet/commits/main"><img src="https://img.shields.io/github/last-commit/seasnakes/gloria-mac-pet?style=flat-square&color=b9a7f0&cacheSeconds=3600" alt="last commit"></a>
+<img src="https://img.shields.io/github/repo-size/seasnakes/gloria-mac-pet?style=flat-square&color=7fd3f5&cacheSeconds=3600" alt="repo size">
 
 <img src="https://count.getloli.com/@seasnakes-gloria-mac-pet?name=seasnakes-gloria-mac-pet&theme=cat-girls-yay&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="浏览量">
 
