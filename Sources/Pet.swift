@@ -219,6 +219,10 @@ final class Pet {
     var awaitingTag = "CLAUDE"
     private var clones: [Clone] = []
     private var lastClonePlace: Double = 0
+    // Computer use: the pose she holds while an agent clicks / types / snaps through her.
+    private var acting: (anim: Anim, start: Double, until: Double, flip: Bool)?
+    private var lastActHop: Double = 0
+    var isActing: Bool { acting.map { now() < $0.until } ?? false }
 
     var scale: CGFloat { body.scale }
     var spriteSize: CGSize { body.spriteSize }
@@ -493,6 +497,7 @@ final class Pet {
         if t - lastScan > (mode == .perched || mode == .walking ? 1.0 / 15 : 1.0 / 30) { rescan(force: false); lastScan = t }
 
         if mode == .walking && (awaiting != nil || music.dancing) { mode = .perched }
+        if mode == .walking && isActing && abs(walkTarget - feet.x) < 2 { mode = .perched }
         if let h = synthHold {
             let m = CGPoint(x: h.center.x + CGFloat(sin((t - h.start) * 2.6)) * 160, y: h.center.y)
             samples.append((t, m)); samples.removeAll { t - $0.0 > 0.1 }
@@ -521,7 +526,7 @@ final class Pet {
         let hit = dragging || body.hits(NSEvent.mouseLocation, sprites)
         if body.panel.ignoresMouseEvents == hit { body.panel.ignoresMouseEvents = !hit }
 
-        if mode == .perched && shot == nil && !music.dancing && awaiting == nil { think(t) }
+        if mode == .perched && shot == nil && !music.dancing && awaiting == nil && !isActing { think(t) }
     }
 
     private func rescan(force: Bool) {
@@ -761,7 +766,7 @@ final class Pet {
         let v = hypot(m.x - lastMouse.x, m.y - lastMouse.y) / max(dt, 0.001)
         mouseSpeed += (v - mouseSpeed) * 0.2
         lastMouse = m
-        guard Prefs.chase, let s = seat, mode == .perched || mode == .walking, shot == nil, !working, awaiting == nil,
+        guard Prefs.chase, let s = seat, mode == .perched || mode == .walking, shot == nil, !working, awaiting == nil, !isActing,
               !music.dancing, !asleep, t > grumpyUntil, t > bounceUntil else {
             if chasing { chasing = false; if mode == .walking { mode = .perched } }
             return
@@ -801,6 +806,62 @@ final class Pet {
     }
 
     func debugDockBounce() { bounceUntil = 0; dockBounce() }
+
+    // MARK: Computer use
+
+    /// Act out one computer-use step: get over to the window being worked on, strike the pose, show where it lands.
+    func act(_ a: CUAction, window w: Win?, at p: CGPoint?, tag: String?) {
+        let t = now()
+        wake(quiet: true)
+        if chasing { chasing = false; if mode == .walking { mode = .perched } }
+        let target = p ?? w.map { CGPoint(x: $0.rect.midX, y: $0.rect.maxY - 80) }
+        // Hop onto the window she's working in (not more than every few seconds), a little to the side of the spot.
+        if let w, mode == .perched || mode == .walking, seat?.win != w.id, t - lastActHop > 2.5, awaiting == nil {
+            rescan(force: true)
+            if let l = ledges.first(where: { $0.win == w.id && $0.right - $0.left >= spriteSize.width * 0.85 }) {
+                lastActHop = t
+                let margin = spriteSize.width * 0.3
+                var x = target?.x ?? (l.left + l.right) / 2
+                x += (x - l.left > (l.right - l.left) / 2 ? -1 : 1) * spriteSize.width * 0.7
+                hopTo(l, x: clamp(x, l.left + margin, l.right - margin))
+            } else if let s = seat, s.isFloor, let tx = target?.x, abs(tx - feet.x) > spriteSize.width * 1.3 {
+                // No room on top of that window (it's maximized): walk along the floor to just beside the spot.
+                lastActHop = t
+                let margin = spriteSize.width * 0.3
+                walkTarget = clamp(tx + (tx > feet.x ? -1 : 1) * spriteSize.width * 0.75, s.left + margin, s.right - margin)
+                mode = .walking
+            }
+        }
+        let anim = ch.pose(for: a.anim)
+        let spec = ch.spec(anim)
+        let side = (hop?.to.x ?? feet.x)
+        let flip = target.map { tp in (spec.facing == "left" && tp.x > side + 24) || (spec.facing == "right" && tp.x < side - 24) } ?? false
+        let hold = max(min(ch.length(anim), 3.2), a.kind == .type ? 2.4 : 1.3)
+        if let cur = acting, cur.anim == anim, t < cur.until { acting = (anim, cur.start, t + hold, flip) } else { acting = (anim, t, t + hold, flip) }
+        if let tp = target, spec.facing == nil { face(tp.x, for: hold) }
+        let k = scale / 0.62
+        switch a.kind {
+        case .tap, .right: if let p { Effects.ripple(at: p) }
+        case .double: if let p { Effects.ripple(at: p, double: true) }
+        case .key: body.particle(a.keys ?? "⌨︎", color: Palette.periwinkle, size: 15 * k)
+        case .drag:
+            if let p, let w, let p2 = a.point2.map({ ComputerUse.screenPoint($0, in: w) }) { Effects.trail(from: p, to: p2) }
+            else if let p { Effects.ripple(at: p, color: Palette.periwinkle) }
+        case .snap, .look:
+            if let w { Effects.flash(w.rect) }
+            body.particle("✦", color: Palette.butter, size: 16 * k)
+        case .type:
+            for i in 0..<3 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.22) { [weak self] in
+                    self?.body.particle(["⌨︎", "a", "s", "d", "·", "k"].randomElement()!, color: Palette.periwinkle, size: 13 * k)
+                }
+            }
+        case .scroll: body.particle("⇣", color: Palette.cyan, size: 16 * k)
+        case .open: body.particle("✧", color: Palette.lavender, size: 15 * k)
+        }
+        let whereText = w.map { "\($0.owner)：" } ?? ""
+        say(whereText + a.label, tag: nil, kind: .caption, duration: max(1.6, hold))
+    }
 
     // MARK: Together (several pets; agents passing notes to each other)
 
@@ -987,6 +1048,10 @@ final class Pet {
                     // A little attention bounce every two seconds.
                     let u = t.truncatingRemainder(dividingBy: 2.2)
                     if u < 0.36 { lift = CGFloat(sin(u / 0.36 * .pi)) * 9 * k }
+                } else if let a = acting, t < a.until {
+                    // Acting out computer use: clicking, typing, snapping, dragging, scrolling.
+                    cell = ch.cell(a.anim, ch.index(a.anim, at: t - a.start))
+                    if a.flip { sx = -1 }
                 } else if t < bounceUntil {
                     // Hopping along with a bouncing Dock icon.
                     let u = (t - bounceStart) / 0.55
@@ -1233,6 +1298,8 @@ final class Pet {
             "working": working,
             "awaiting": awaiting ?? "",
             "clones": cloneCount,
+            "acting": isActing ? (acting?.anim.rawValue ?? "") : "",
+            "flipped": isActing && (acting?.flip ?? false),
             "bubble": bubble.visible ? bubble.text : "",
         ]
     }

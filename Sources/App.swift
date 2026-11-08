@@ -195,9 +195,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Who's on screen.
         let who = NSMenuItem(title: "角色（可以同时放几个）", action: nil, keyEquivalent: "")
         let wm = NSMenu()
-        for (i, id) in Character.ids.enumerated() {
+        for id in Character.ids {
             let shown = pets.contains { $0.ch.id == id }
-            let it = item(Character.title(id), #selector(toggleShown(_:)), on: shown, tag: i)
+            let it = item(Character.title(id), #selector(toggleShown(_:)), on: shown)
+            it.representedObject = id
             if shown && pets.count == 1 { it.isEnabled = false }
             wm.addItem(it)
         }
@@ -213,8 +214,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             sm.addItem(item("接入 \(name)（装钩子）", src == "claude" ? #selector(toggleClaude) : #selector(toggleCodex), on: on))
             sm.addItem(.separator())
             sm.addItem(item("由谁来当：", nil))
-            for (ci, id) in Character.ids.enumerated() {
-                sm.addItem(item("  " + Character.title(id), #selector(pickRole(_:)), on: petFor(src)?.ch.id == id, tag: si * 10 + ci))
+            for id in Character.ids {
+                let r = item("  " + Character.title(id), #selector(pickRole(_:)), on: petFor(src)?.ch.id == id, tag: si)
+                r.representedObject = id
+                sm.addItem(r)
             }
             it.submenu = sm
             m.addItem(it)
@@ -247,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dm.addItem(item("跳舞 16 秒", #selector(demoDance)))
         dm.addItem(item("Claude Code 一轮工作", #selector(demoHusk)))
         dm.addItem(item("Claude 请 Codex 帮忙（两个化身传话）", #selector(demoTogether)))
+        dm.addItem(item("Codex 操作电脑（computer use）", #selector(demoComputerUse)))
         dm.addItem(item("被扔出去", #selector(demoThrow)))
         dm.addItem(item("被拎起来晃一晃", #selector(demoHold)))
         dm.addItem(item("打个盹 10 秒", #selector(demoNap)))
@@ -266,10 +270,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc func hideThis() { if let p = menuPet { setShown(p.ch.id, false) } }
     @objc func toggleShown(_ sender: NSMenuItem) {
-        let id = Character.ids[sender.tag]
+        guard let id = sender.representedObject as? String else { return }
         setShown(id, !pets.contains { $0.ch.id == id })
     }
-    @objc func pickRole(_ sender: NSMenuItem) { setRole(["claude", "codex"][sender.tag / 10], Character.ids[sender.tag % 10]) }
+    @objc func pickRole(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        setRole(["claude", "codex"][sender.tag], id)
+    }
     @objc func setSize(_ sender: NSMenuItem) { for p in pets { p.setScale(CGFloat([0.5, 0.62, 0.8, 1.0][sender.tag])) } }
     @objc func toggleWander() { Prefs.wander.toggle() }
     @objc func toggleNap() { Prefs.nap.toggle() }
@@ -303,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         brain.demoTogether()
     }
+    @objc func demoComputerUse() { brain.demoComputerUse() }
     @objc func demoThrow() { focus.throwHer(vx: CGFloat.random(in: -1400...1400), vy: 1500) }
     @objc func demoHold() { focus.simulateHold(3) }
     @objc func demoNap() { focus.forceSleepUntil = now() + 10 }
@@ -339,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "scale": for p in pets { p.setScale(CGFloat(num("value", 0.62))) }
         case "demo": brain.demo()
         case "together": brain.demoTogether()
+        case "cua": brain.demoComputerUse()
         case "hold": pet.simulateHold(num("seconds", 3))
         case "character": replace(pet, with: m["id"] as? String ?? "gloria")
         case "show": setShown(m["id"] as? String ?? "", (m["on"] as? Bool) ?? true)
@@ -438,6 +447,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         for c in Courier.inFlight { put(c.panel, c.layer) }
+        // Effects only show through their animations: draw the on-screen (presentation) state.
+        for e in Effects.panels { put(e.panel, e.layer?.presentation() ?? e.layer) }
         guard let img = ctx.makeImage() else { return }
         let rep = NSBitmapImageRep(cgImage: img)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))

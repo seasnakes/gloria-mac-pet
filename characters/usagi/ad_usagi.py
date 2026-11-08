@@ -24,7 +24,7 @@ import logging; logging.disable(logging.INFO)
 from animated_drawings.config import CharacterConfig, MotionConfig, RetargetConfig
 from animated_drawings.model.animated_drawing import AnimatedDrawing
 
-CW, CH, COLS, ROWS = 192, 208, 8, 15
+CW, CH, COLS, ROWS = 192, 208, 8, 20
 FEET = 202
 TARGET_H = 196                      # standing height (ear tips → feet) in the cell
 
@@ -236,6 +236,7 @@ def build():
     PAD = 520
     WW, WH = CW + 2 * MX, CH + MT + 40                    # working canvas; the cell sits at (MX, MT)
 
+    last = {}
     def render(world, joints, mode="ground", rotate=0, seat=None, grab=None, lift=0):
         """→ premultiplied float canvas WW×WH with the cell at (MX, MT), placed by `mode`."""
         big = PAINT.paint(world, pad=PAD, k=K)
@@ -253,6 +254,7 @@ def build():
         elif mode == "seat": dy = seat - jc[root_i][1]
         elif mode == "grab": dy = grab - jc[head_i][1]
         M2 = np.float32([[1, 0, dx + MX], [0, 1, dy + MT]])
+        last["joints"] = {n: (float(jc[k][0] + dx), float(jc[k][1] + dy)) for k, n in enumerate(NAMES)}
         return cv2.warpAffine(small, M2, (WW, WH), flags=cv2.INTER_LINEAR), jc[root_i][1] + dy
 
     def fit_row(canvases, anchor):
@@ -350,6 +352,89 @@ def build():
         "right_knee": aim(6 + 16 * S(u)), "right_foot": aim(4 + 22 * S(u)), "left_knee": aim(-6 + 16 * S(u)), "left_foot": aim(-4 + 22 * S(u))}),
         mode="grab", grab=GRAB) for u in [i / 4 * TAU for i in range(4)]], anchor=(96, GRAB))
 
+    # 15–19 computer use: click, type, screenshot, drag, scroll — arm poses plus flat props drawn at her hands.
+    from PIL import Image, ImageDraw
+    def GJ(*wj, **kw):
+        c = render(*wj, **kw)[0]
+        return c, dict(last["joints"])
+    def props_row(r, frames, draw):
+        """frames: [(canvas, joints)]; draw(d, i, joints) paints props in cell coords after the row is fitted."""
+        cells, f = fit_row([c for c, _ in frames], (96, FEET)); fits[r] = round(f, 3)
+        for i, (img, (_, j)) in enumerate(zip(cells, frames)):
+            jj = {n: (96 + f * (x - 96), FEET + f * (y - FEET)) for n, (x, y) in j.items()}
+            im = Image.fromarray(img, "RGBA")
+            draw(ImageDraw.Draw(im), i, jj)
+            sheet[r * CH:(r + 1) * CH, i * CW:(i + 1) * CW] = np.array(im)
+    INK, PINK, LILAC, ORANGE = (40, 32, 44, 255), (246, 158, 204, 255), (214, 204, 240, 255), (255, 170, 70, 255)
+    def cursor(d, x, y, k=1.0):
+        pts = [(0, 0), (0, 13), (3.4, 10), (6, 15.5), (8.4, 14.4), (5.8, 9), (9.8, 9)]
+        d.polygon([(x + u * k, y + v * k) for u, v in pts], fill=(255, 255, 255, 255), outline=INK, width=2)
+    def ring(d, x, y, r, col):
+        d.ellipse((x - r, y - r, x + r, y + r), outline=col, width=2)
+    TAP = []
+    for i in range(8):
+        reach = [0.25, 0.65, 1.0, 1.08, 1.08, 0.9, 0.6, 0.3][i]
+        TAP.append(GJ(*pose_world({"head": 6 * reach, "torso": -3 * reach}, {"right_elbow": aim(20 + 64 * reach), "right_hand": aim(18 + 72 * reach)})))
+    def tap_props(d, i, j):
+        x, y = j["right_hand"]; press = i in (3, 4)
+        if press: ring(d, x - 12, y - 2, 6 if i == 3 else 10, PINK)
+        cursor(d, x - 12, y - 2 + (1 if press else 0), 1.0 * (0.88 if press else 1))
+    props_row(15, TAP, tap_props)
+    TYPE = []
+    for i in range(8):
+        a, b = (6, 0) if i % 2 == 0 else (0, 6)
+        TYPE.append(GJ(*pose_world({"head": -8 + 2 * S(i / 8 * TAU)}, {"right_elbow": aim(30), "right_hand": aim(-48 + a),
+                                                                       "left_elbow": aim(-30), "left_hand": aim(48 - b)})))
+    def type_props(d, i, j):
+        rx, ry = j["right_hand"]; lx, ly = j["left_hand"]
+        top = max(ry, ly) + 3
+        cx = (rx + lx) / 2
+        d.rounded_rectangle((cx - 30, top, cx + 30, top + 26), 5, fill=LILAC, outline=INK, width=2)
+        d.rounded_rectangle((cx - 34, top + 25, cx + 34, top + 30), 2, fill=(196, 186, 226, 255), outline=INK, width=2)
+        d.ellipse((cx - 4, top + 9, cx + 4, top + 17), fill=PINK)
+    props_row(16, TYPE, type_props)
+    SNAP = []
+    for i in range(8):
+        up = min(1, i / 2)
+        SNAP.append(GJ(*pose_world({"head": -4 * up}, {"left_elbow": aim(-(40 + 90 * up)), "left_hand": aim(-(30 + 130 * up))})))
+    def snap_props(d, i, j):
+        x, y = j["left_hand"]
+        d.rounded_rectangle((x - 2, y - 12, x + 24, y + 6), 4, fill=PINK, outline=INK, width=2)
+        d.ellipse((x + 6, y - 9, x + 18, y + 3), fill=(255, 255, 255, 255), outline=INK, width=2)
+        d.ellipse((x + 10, y - 5, x + 14, y - 1), fill=INK)
+        if i in (4, 5):
+            k = 1.0 if i == 4 else 0.7
+            for ang in range(0, 360, 45):
+                r0, r1 = 4 * k, (10 if ang % 90 == 0 else 7) * k
+                c, sn = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+                d.line((x + 20 + c * r0, y - 18 + sn * r0, x + 20 + c * r1, y - 18 + sn * r1), fill=(255, 210, 63, 255), width=2)
+    props_row(17, SNAP, snap_props)
+    DRAG = []
+    for i in range(8):
+        u = [0, 0.1, 0.3, 0.5, 0.7, 0.88, 1.0, 1.0][i]
+        lean = 6 if 0 < i < 7 else 0
+        DRAG.append((GJ(*pose_world({"torso": -lean, "head": 4}, {"right_elbow": aim(78), "right_hand": aim(86)})), u))
+    def drag_props(d, i, j):
+        x, y = j["right_hand"]; u = DRAG[i][1]
+        for k in range(int(4 + 8 * u)):
+            d.ellipse((x - 14 - k * 4 - 1, y - 1, x - 14 - k * 4 + 1, y + 1), fill=INK)
+        cursor(d, x - 12, y - 4, 1.0)
+    props_row(18, [f for f, _ in DRAG], drag_props)
+    SCROLL = []
+    for i in range(8):
+        SCROLL.append(GJ(*pose_world({"head": -6}, {"left_elbow": aim(-(50 + 10 * (i % 4))), "left_hand": aim(-(60 + 14 * (i % 4)))})))
+    def scroll_props(d, i, j):
+        x, y = j["left_hand"]
+        px, py = x + 18, y - 4
+        d.rounded_rectangle((px - 10, py - 15, px + 10, py + 15), 3, fill=(255, 255, 255, 255), outline=INK, width=2)
+        off = (i % 4) * 2
+        for k in range(-1, 6):
+            ly = py - 11 + k * 5 - off
+            if py - 13 < ly < py + 13: d.line((px - 6, ly, px + (4 if k % 2 else 6), ly), fill=ORANGE if k % 3 == 0 else (150, 146, 168, 255), width=1)
+        d.line((px + 15, py - 6, px + 15, py + 6), fill=INK, width=2)
+        d.line((px + 12, py + 3, px + 15, py + 7), fill=INK, width=2); d.line((px + 18, py + 3, px + 15, py + 7), fill=INK, width=2)
+    props_row(19, SCROLL, scroll_props)
+
     cv2.imwrite(str(HERE / "usagi.png"), cv2.cvtColor(sheet, cv2.COLOR_RGBA2BGRA))
     meta = {
         "id": "usagi", "name": "抽象乌萨奇", "source": "Animated Drawings (ARAP mesh + BVH retargeting) on source.png; see ad/",
@@ -363,6 +448,11 @@ def build():
             "review": {"row": 8, "count": 6, "frameMs": 150}, "perch": {"row": 11, "count": 6, "frameMs": 200},
             "dance": {"row": 12, "count": 8, "frameMs": 140}, "sleep": {"row": 13, "count": 6, "frameMs": 340},
             "dangle": {"row": 14, "count": 4, "frameMs": 110},
+            "tap": {"row": 15, "count": 8, "frameMs": [130, 110, 110, 90, 150, 120, 120, 140], "facing": "left"},
+            "type": {"row": 16, "count": 8, "frameMs": 110, "loop": True},
+            "snap": {"row": 17, "count": 8, "frameMs": [150, 130, 260, 300, 90, 120, 220, 260]},
+            "drag": {"row": 18, "count": 8, "frameMs": [160, 120, 110, 110, 110, 110, 160, 220], "facing": "left"},
+            "scroll": {"row": 19, "count": 8, "frameMs": 120, "loop": True, "facing": "right"},
         },
     }
     (HERE / "usagi.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))

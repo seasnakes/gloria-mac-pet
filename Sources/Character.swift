@@ -2,11 +2,16 @@ import AppKit
 
 // The desk pets. Each has a sprite sheet in GLORIA's layout (8 columns of 192×208 cells, feet on y=202) and a JSON file
 // with its rows, timings and anchors. Several can be on screen at once; every pet carries its own Character.
+// Built-in pets live in the app bundle; imported ones (tools/import_dsh.py --install) in Application Support/GLORIA/characters/<id>/.
 
 enum Anim: String, CaseIterable {
     case idle, runRight, runLeft, wave, jump, failed, waiting, work, review
     // Sitting on an edge, dance, nap, held up.
     case perch, dance, sleep, dangle
+    // Computer use: clicking, typing, taking a screenshot, dragging, scrolling.
+    case tap, type, snap, drag, scroll
+
+    static let computerUse: [Anim] = [.tap, .type, .snap, .drag, .scroll]
 }
 
 /// One animation: `count` frames starting at `row`, eight per row (longer loops continue on the next rows).
@@ -19,6 +24,8 @@ struct AnimSpec {
     let loop: Bool
     /// Frames per key pose (dance: key, then in-betweens toward the next key).
     let sub: Int
+    /// Which way the pose reaches ("left"/"right"), so the app can mirror it toward its target.
+    let facing: String?
 }
 
 final class Character {
@@ -51,6 +58,20 @@ final class Character {
     var hasExtras: Bool { specs[.dangle] != nil && sprites.has(cell(.dangle, 0)) }
 
     func spec(_ a: Anim) -> AnimSpec { specs[a] ?? specs[.idle]! }
+    func has(_ a: Anim) -> Bool { specs[a] != nil }
+    /// One pass through an animation, in seconds.
+    func length(_ a: Anim) -> Double { durations(a).reduce(0, +) }
+
+    /// The pose to use for a computer-use action, falling back on what the sheet has.
+    func pose(for a: Anim) -> Anim {
+        if has(a) { return a }
+        switch a {
+        case .scroll: return has(.drag) ? .drag : .work
+        case .tap: return .wave
+        case .snap: return .review
+        default: return .work
+        }
+    }
     func count(_ a: Anim) -> Int { spec(a).count }
     func frameTime(_ a: Anim) -> Double { spec(a).frameTime }
     func durations(_ a: Anim) -> [Double] { let s = spec(a); return s.durations ?? Array(repeating: s.frameTime, count: s.count) }
@@ -74,15 +95,51 @@ final class Character {
     /// Which animation a cell belongs to (for "is she sitting?").
     func anim(of c: Cell) -> Anim? { owner[c] }
 
-    static let ids = ["gloria", "doro", "usagi"]
-    static func title(_ id: String) -> String { ["gloria": "GLORIA · 柔彩", "doro": "Doro", "usagi": "抽象乌萨奇"][id] ?? id }
+    static let builtIn = ["gloria", "doro", "usagi", "grokbot", "dsh"]
+    /// Imported pets: Application Support/GLORIA/characters/<id>/<id>.json + <id>.png.
+    static var userDir: URL { Paths.support.appendingPathComponent("characters", isDirectory: true) }
+
+    private static var metaCache: [String: [String: Any]] = [:]
+    private static var scanned: [String]?
+
+    /// Every pet that can be shown: the built-in ones first, then imported ones.
+    static var ids: [String] {
+        if let s = scanned { return s }
+        var out = builtIn.filter { files($0) != nil }
+        let dirs = (try? FileManager.default.contentsOfDirectory(at: userDir, includingPropertiesForKeys: nil)) ?? []
+        for d in dirs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let id = d.lastPathComponent
+            if !out.contains(id), files(id) != nil { out.append(id) }
+        }
+        scanned = out
+        return out
+    }
+    static func rescan() { scanned = nil; metaCache.removeAll() }
+
+    private static func files(_ id: String) -> (json: URL, png: URL)? {
+        let fm = FileManager.default
+        let user = userDir.appendingPathComponent(id, isDirectory: true)
+        let uj = user.appendingPathComponent("\(id).json"), up = user.appendingPathComponent("\(id).png")
+        if fm.fileExists(atPath: uj.path), fm.fileExists(atPath: up.path) { return (uj, up) }
+        if let j = Bundle.main.url(forResource: id, withExtension: "json"), let p = Bundle.main.url(forResource: id, withExtension: "png") { return (j, p) }
+        return nil
+    }
+
+    private static func meta(_ id: String) -> [String: Any]? {
+        if let m = metaCache[id] { return m }
+        guard let f = files(id), let data = try? Data(contentsOf: f.json),
+              let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        metaCache[id] = m
+        return m
+    }
+
+    static func title(_ id: String) -> String {
+        if let t = (meta(id)?["persona"] as? [String: Any])?["title"] as? String { return t }
+        return ["gloria": "GLORIA · 柔彩", "doro": "Doro", "usagi": "抽象乌萨奇", "grokbot": "GrokBot"][id] ?? (meta(id)?["name"] as? String ?? id)
+    }
 
     static func load(_ id: String) -> Character? {
-        guard ids.contains(id),
-              let j = Bundle.main.url(forResource: id, withExtension: "json"),
-              let data = try? Data(contentsOf: j),
-              let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let png = Bundle.main.url(forResource: id, withExtension: "png"), let sp = Sprites(url: png) else { return nil }
+        guard let f = files(id), let m = meta(id), let sp = Sprites(url: f.png) else { return nil }
         var specs: [Anim: AnimSpec] = [:]
         for (k, v) in m["anims"] as? [String: [String: Any]] ?? [:] {
             guard let a = Anim(rawValue: k), let row = v["row"] as? Int, let n = v["count"] as? Int, n > 0 else { continue }
@@ -90,12 +147,22 @@ final class Character {
             let d = (ms as? [NSNumber])?.map { $0.doubleValue / 1000 }
             let ft = ((ms as? NSNumber)?.doubleValue ?? 120) / 1000
             specs[a] = AnimSpec(row: row, count: n, frameTime: d.map { $0.reduce(0, +) / Double($0.count) } ?? ft,
-                                durations: d?.count == n ? d : nil, loop: v["loop"] as? Bool ?? false, sub: max(1, v["sub"] as? Int ?? 1))
+                                durations: d?.count == n ? d : nil, loop: v["loop"] as? Bool ?? false, sub: max(1, v["sub"] as? Int ?? 1),
+                                facing: v["facing"] as? String)
         }
         guard specs[.idle] != nil else { return nil }
         func num(_ k: String, _ d: Double) -> CGFloat { CGFloat((m[k] as? NSNumber)?.doubleValue ?? d) }
         let g = (m["grab"] as? [NSNumber]).map { CGPoint(x: $0[0].doubleValue, y: $0[1].doubleValue) } ?? CGPoint(x: 96, y: 40)
-        let (name, tag, mul, lines) = persona(id)
+        var (name, tag, mul, lines) = persona(id)
+        if let p = m["persona"] as? [String: Any] {
+            // Imported pets bring their own name and lines.
+            name = m["name"] as? String ?? name
+            tag = p["tag"] as? String ?? tag
+            mul = CGFloat((p["scale"] as? NSNumber)?.doubleValue ?? Double(mul))
+            func list(_ k: String, _ d: [String]) -> [String] { let v = (p[k] as? [String]) ?? []; return v.isEmpty ? d : v }
+            lines = Lines(greeting: p["greeting"] as? String ?? lines.greeting, pats: list("pats", lines.pats), wake: list("wake", lines.wake),
+                          ouch: list("ouch", lines.ouch), angry: list("angry", lines.angry), hello: list("hello", lines.hello))
+        }
         return Character(id: id, name: name, tag: tag, sprites: sp, specs: specs, feetY: num("feetY", 202), seatY: num("seatY", 149),
                          grab: g, scaleMul: mul * num("scale", 1), lines: lines)
     }
@@ -116,6 +183,13 @@ final class Character {
                 ouch: ["乌拉——！", "噗噜噜……", "哈？？"],
                 angry: ["哈？？？", "乌拉！！", "噗噜噜噜噜噜！"],
                 hello: ["呀哈！", "乌拉～", "哈！"]))
+        case "grokbot":
+            return ("GrokBot", "GROKBOT", 1.0, Lines(greeting: "哔——GrokBot 上线！耳朵天线已展开。",
+                pats: ["哔哔～", "收到！", "嘀——好感度 +1", "（耳朵转了转）", "扫描到主人，开心。"],
+                wake: ["系统唤醒……哔！", "刚才在省电模式～"],
+                ouch: ["警告：姿态异常！", "陀螺仪晕了……", "哔——撞到了！"],
+                angry: ["过载了！别戳！", "哔！哔！哔！", "进入防御模式。"],
+                hello: ["哔～你好！", "信号已连接。", "嘀嘀！"]))
         default:
             return ("GLORIA", "GLORIA", 1.0, Lines(greeting: "嗨～我是 GLORIA！把我拖到任何窗口上，我会坐在上面陪你。",
                 pats: ["嘿嘿～", "摸摸头！", "干嘛呀～", "我在呢。", "今天也一起加油！", "要不要放首歌？我想跳舞。"],
@@ -130,8 +204,8 @@ final class Character {
     func icon(size: CGFloat) -> NSImage? {
         guard let img = sprites.image(cell(.idle, 0)) else { return nil }
         let top = CGFloat(sprites.top(cell(.idle, 0)))
-        let h = id == "usagi" ? 100.0 : (feetY - top) * 0.62
-        let y = id == "usagi" ? top + 22 : top
+        let h = id == "usagi" ? 100.0 : id == "grokbot" ? 74.0 : (feetY - top) * 0.62
+        let y = id == "usagi" ? top + 22 : id == "grokbot" ? top + 52 : top
         let w = h * 1.08
         guard let c = img.cropping(to: CGRect(x: 96 - w / 2, y: y, width: w, height: h)) else { return nil }
         return NSImage(cgImage: c, size: NSSize(width: size * w / h, height: size))

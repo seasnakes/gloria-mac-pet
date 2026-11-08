@@ -26,7 +26,7 @@ from src.core.standing_doro import StandingDoro
 fmt = QSurfaceFormat(); fmt.setAlphaBufferSize(8); QSurfaceFormat.setDefaultFormat(fmt)
 app = QApplication(sys.argv)
 
-CW, CH, COLS, ROWS = 192, 208, 8, 22
+CW, CH, COLS, ROWS = 192, 208, 8, 27
 FEET_CANVAS = (295, 485)            # StandingDoro's body centre / feet line in its 600-unit canvas
 TARGET_H = 172                      # standing height in the cell, px
 
@@ -89,12 +89,85 @@ class Stage(QOpenGLWidget):
             if part == "Body_group": m.SetPartOpacity(i, 0)
         m.Draw()
         p.endNativePainting(); p.end()
+        if s.get("props"): draw_props(self, s["props"], pose["y"])
 
     def shot(self, **spec):
         self.spec = spec
         for _ in range(3):              # settle physics with the same parameters
             img = self.grabFramebuffer()
         return img
+
+
+# Props for the computer-use rows, drawn in StandingDoro's style (white fill, #191719 outline) in its 600-unit canvas.
+from PyQt5.QtGui import QColor, QPen, QPainterPath, QPolygonF, QBrush
+from PyQt5.QtCore import QPointF, QRectF
+INK, ORANGE, LEAF = QColor("#191719"), QColor("#ff9a2e"), QColor("#58b947")
+
+def draw_props(widget, props, y):
+    p = QPainter(widget); p.setRenderHint(QPainter.Antialiasing)
+    side = min(widget.width(), widget.height())
+    p.translate((widget.width() - side) / 2, (widget.height() - side) / 2); p.scale(side / 600, side / 600)
+    p.translate(0, y)
+    def pen(w=5): return QPen(INK, w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    for kind, *a in props:
+        if kind == "cursor":                       # arrow tip at (x, y)
+            x, yy, k = a
+            pts = [(0, 0), (0, 36), (9, 28), (16, 43), (23, 40), (16, 25), (27, 25)]
+            p.setPen(pen(4)); p.setBrush(QColor("#ffffff"))
+            p.drawPolygon(QPolygonF([QPointF(x + u * k, yy + v * k) for u, v in pts]))
+        elif kind == "ripple":
+            x, yy, r = a
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(ORANGE, 5)); p.drawEllipse(QPointF(x, yy), r, r)
+            p.setPen(QPen(INK, 3)); p.drawEllipse(QPointF(x, yy), r * 0.55, r * 0.55)
+        elif kind == "laptop":                     # back of the lid + the deck, screen facing Doro
+            p.setPen(pen()); p.setBrush(QColor("#eceaf2"))
+            p.drawRoundedRect(QRectF(218, 368, 154, 82), 12, 12)
+            p.setBrush(QColor("#d9d6e2")); p.drawRoundedRect(QRectF(204, 446, 182, 14), 6, 6)
+            p.setPen(pen(3)); p.setBrush(ORANGE); p.drawEllipse(QPointF(295, 405), 15, 15)
+            p.setBrush(LEAF); p.drawEllipse(QRectF(296, 380, 13, 8))
+        elif kind == "paw":                        # a paw resting on something in front of her
+            x, yy = a
+            p.setPen(pen()); p.setBrush(QColor("#ffffff")); p.drawEllipse(QPointF(x, yy), 16, 13)
+        elif kind == "camera":
+            x, yy = a
+            p.setPen(pen()); p.setBrush(ORANGE); p.drawRoundedRect(QRectF(x - 40, yy - 27, 80, 54), 12, 12)
+            p.setBrush(QColor("#ffffff")); p.drawEllipse(QPointF(x + 4, yy + 3), 19, 19)
+            p.setBrush(INK); p.drawEllipse(QPointF(x + 4, yy + 3), 9, 9)
+            p.setBrush(QColor("#ffffff")); p.setPen(pen(3)); p.drawRect(QRectF(x - 32, yy - 20, 14, 9))
+            p.setPen(Qt.NoPen); p.setBrush(QColor("#ffffff")); p.drawEllipse(QPointF(x + 1, yy - 1), 3, 3)
+        elif kind == "flash":
+            x, yy, k = a
+            p.setPen(QPen(QColor("#ffd23f"), 6, Qt.SolidLine, Qt.RoundCap))
+            for ang in range(0, 360, 45):
+                r0, r1 = 10 * k, (24 if ang % 90 == 0 else 17) * k
+                c, sn = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+                p.drawLine(QPointF(x + c * r0, yy + sn * r0), QPointF(x + c * r1, yy + sn * r1))
+        elif kind == "trail":
+            x0, y0, x1, y1 = a
+            p.setPen(QPen(INK, 4, Qt.DotLine, Qt.RoundCap)); p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+        elif kind == "page":                       # a little page with lines, scrolled by `off`
+            x, yy, off = a
+            p.setPen(pen()); p.setBrush(QColor("#ffffff")); p.drawRoundedRect(QRectF(x - 34, yy - 44, 68, 88), 8, 8)
+            p.save(); p.setClipRect(QRectF(x - 30, yy - 40, 60, 80))
+            for i in range(-2, 8):
+                ly = yy - 36 + i * 14 - off
+                p.setPen(QPen(ORANGE if i % 3 == 0 else QColor("#9a96a8"), 4, Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(QPointF(x - 22, ly), QPointF(x + (14 if i % 2 else 22), ly))
+            p.restore()
+            p.setPen(QPen(INK, 4, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(x + 46, yy - 16), QPointF(x + 46, yy + 16))
+            p.drawLine(QPointF(x + 38, yy + 8), QPointF(x + 46, yy + 18)); p.drawLine(QPointF(x + 54, yy + 8), QPointF(x + 46, yy + 18))
+    p.end()
+
+
+def tip(theta, right=False):
+    """Paw tip in canvas units for an arm rotated by theta degrees (StandingDoro's shoulder pivots)."""
+    x0, y0 = -14, 64
+    t = math.radians(theta)
+    x, yy = x0 * math.cos(t) - y0 * math.sin(t), x0 * math.sin(t) + y0 * math.cos(t)
+    px, py = 228 + x, 329 + yy
+    return (590 - px if right else px), py
 
 
 NECK = lambda ay: 0.0
@@ -232,6 +305,57 @@ for i in range(WORK_N):
         params={**EXPR["思考"], "ParamAngleX": 13 * S(w), "ParamAngleY": -3 + 3 * S(2 * w), "ParamAngleZ": 4 * S(w + .5),
                 "ParamBreath": .5 + .5 * S(2 * w), "ParamEyeLOpen": eye, "ParamEyeROpen": eye})
 
+# 22–26 computer use (Codex / Claude operating apps): click, type, screenshot, drag, scroll.
+CU_ROW = 22
+# tap: reach left with the cursor, press (ripple), come back.
+for i in range(8):
+    reach = [0.25, 0.65, 1.0, 1.08, 1.08, 0.9, 0.6, 0.3][i]
+    press = i in (3, 4)
+    th = 12 + 46 * reach
+    tx, ty = tip(th)
+    props = [("cursor", tx - 30, ty - 14 + (4 if press else 0), 1.15 * (0.88 if press else 1))]
+    if press: props.insert(0, ("ripple", tx - 30, ty - 14, 22 if i == 3 else 38))
+    put(CU_ROW, i, action="idle", t=i * .12, pose=P(arm_left=th), props=props,
+        params={"ParamAngleX": -16 * reach, "ParamAngleY": 4 * reach, "ParamEyeSmile": 1 if press else 0,
+                "ParamMouthOpenY": 0.7 if press else 0.15})
+# type: little laptop (orange 欧润吉 on the lid), paws tapping on the deck, head down.
+for i in range(8):
+    up_l, up_r = (10, 0) if i % 2 == 0 else (0, 10)
+    blink = 0 if i == 5 else 1
+    put(CU_ROW + 1, i, action="idle", t=i * .15, pose=P(arm_left=-38, arm_right=-38, y=1.2 * S(i / 8 * TAU)),
+        props=[("laptop",), ("paw", 232, 446 - up_l), ("paw", 358, 446 - up_r)],
+        params={"ParamAngleY": -14, "ParamAngleX": 6 * S(i / 8 * TAU), "ParamEyeLOpen": blink, "ParamEyeROpen": blink,
+                "ParamMouthOpenY": 0.25 if i % 2 else 0.05})
+# snap: orange camera up by her face, a wink, the flash on the click.
+for i in range(8):
+    up = min(1, i / 2)
+    th = 30 + 100 * up
+    tx, ty = tip(th, right=True)
+    click = i in (4, 5)
+    props = [("camera", tx + 12, ty - 22), ("paw", tx - 4, ty - 6)]
+    if click: props.append(("flash", tx + 16, ty - 62, 1.3 if i == 4 else 0.9))
+    put(CU_ROW + 2, i, action="idle", t=i * .14, pose=P(arm_right=th), props=props,
+        params={"ParamAngleX": 6 * up, "ParamEyeROpen": 0 if up >= 1 else 1, "ParamEyeSmile": 1 if click else 0.3,
+                "ParamMouthOpenY": 0.6 if click else 0.2})
+# drag: grab the cursor on the left and pull it along, leaning back, a dotted trail behind it.
+for i in range(8):
+    u = [0, 0.1, 0.3, 0.5, 0.7, 0.88, 1.0, 1.0][i]
+    th = 50 + 6 * u
+    tx, ty = tip(th)
+    lean = 14 * (1 if 0 < i < 7 else 0)
+    cx = tx - 30
+    props = [("trail", cx - 8 - 90 * u, ty - 12, cx - 8, ty - 12), ("cursor", cx, ty - 16, 1.1)]
+    put(CU_ROW + 3, i, action="idle", t=i * .1, pose=P(arm_left=th, body_squash=1, music_lean=lean, step=0.3 * S(i / 8 * TAU)),
+        props=props, params={**(EXPR["感叹号"] if i == 0 else {}), "ParamAngleX": -10, "ParamAngleZ": -6 * (lean > 0),
+                             "ParamMouthOpenY": 0.3})
+# scroll: stroking a little page downwards beside her.
+for i in range(8):
+    off = (i % 4) * 5
+    th = 40 + 12 * (i % 4)
+    tx, ty = tip(th, right=True)
+    put(CU_ROW + 4, i, action="idle", t=i * .12, pose=P(arm_right=th), props=[("page", 448, 372, off), ("paw", tx + 6, ty - 4)],
+        params={"ParamAngleX": 14, "ParamAngleY": -6, "ParamEyeSmile": 0.4 if i % 4 == 0 else 0})
+
 sheet.save(HERE / "doro.png")
 
 # Anchors in cell px: the seat is the belly line (feet lifted ~30 units above the feet line); the grab point is the
@@ -250,6 +374,11 @@ meta = {
         "work": {"row": 20, "count": WORK_N, "frameMs": WORK_MS, "loop": True}, "review": {"row": 8, "count": 6, "frameMs": 160},
         "perch": {"row": 11, "count": 6, "frameMs": 200}, "dance": {"row": 12, "count": 8, "frameMs": 130},
         "sleep": {"row": 13, "count": 6, "frameMs": 360}, "dangle": {"row": 14, "count": 4, "frameMs": 110},
+        "tap": {"row": CU_ROW, "count": 8, "frameMs": [130, 110, 110, 90, 150, 120, 120, 140], "facing": "left"},
+        "type": {"row": CU_ROW + 1, "count": 8, "frameMs": 110, "loop": True},
+        "snap": {"row": CU_ROW + 2, "count": 8, "frameMs": [150, 130, 260, 300, 90, 120, 220, 260]},
+        "drag": {"row": CU_ROW + 3, "count": 8, "frameMs": [160, 120, 110, 110, 110, 110, 160, 220], "facing": "left"},
+        "scroll": {"row": CU_ROW + 4, "count": 8, "frameMs": 120, "loop": True, "facing": "right"},
     },
 }
 (HERE / "doro.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))

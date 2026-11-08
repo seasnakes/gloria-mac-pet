@@ -5,3 +5,6 @@ GLORIA.app/
 .DS_Store
 __pycache__/
 *.pyc
+
+# GrokBot raw 2x renders (rebuild with characters/grokbot/render_grokbot.py)
+characters/grokbot/frames/

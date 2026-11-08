@@ -58,7 +58,9 @@ enum HookClient {
                        "prompt", "message", "title", "notification_type", "last_assistant_message", "agent_id", "agent_type",
                        "source", "reason", "trigger", "stop_hook_active"]
     static let inputKeep = ["file_path", "file_paths", "path", "command", "cmd", "pattern", "url", "query", "description",
-                            "subagent_type", "notebook_path", "questions"]
+                            "subagent_type", "notebook_path", "questions",
+                            // computer use: Codex's cua_repl code, Claude's action / coordinates (typed text: only its length)
+                            "code", "title", "action", "coordinate", "start_coordinate", "scroll_direction", "key", "app"]
 
     /// `GLORIA --hook claude|codex`: forward stdin's event and exit 0 quickly, printing nothing.
     static func run(source: String) {
@@ -109,6 +111,15 @@ enum HookClient {
         if let input = e["tool_input"] as? [String: Any] {
             var i: [String: Any] = [:]
             for k in inputKeep { if let v = input[k], let t = trim(v, depth: 1) { i[k] = t } }
+            if let code = input["code"] as? String { i["code"] = String(code.prefix(2400)) }
+            if let text = input["text"] as? String {
+                if (input["action"] as? String) == "key" { i["text"] = cap(text, 24) } else { i["text_len"] = text.count }
+            }
+            if let acts = input["actions"] as? [[String: Any]] {
+                i["actions"] = acts.prefix(16).map { a -> [String: Any] in
+                    ["name": a["name"] as? String ?? "", "action": (a["input"] as? [String: Any])?["action"] as? String ?? ""]
+                }
+            }
             o["tool_input"] = i
         }
         if let r = e["last_assistant_message"] as? String { o["last_assistant_message"] = String(r.prefix(1200)) }
@@ -337,6 +348,8 @@ final class HuskBrain {
     struct Link { let from: String; let to: String; let task: String; let at: Double }
     private var links: [String: Link] = [:]
     private var lastFailSay: Double = 0
+    /// The app a computer-use session last picked with getApp(); later calls in the same REPL reuse it.
+    private var cuaApp: [String: String] = [:]
     private var lastCaption: [String: Double] = [:]
     private(set) var events = 0
 
@@ -378,7 +391,11 @@ final class HuskBrain {
         case "PreToolUse":
             s.busy = true
             s.lastTool = describe(tool, input)
-            if let to = AgentCalls.callee(from: src, tool: tool, input: input) {
+            if let cu = ComputerUse.parse(source: src, tool: tool, input: input) {
+                s.lastTool = "操作电脑"
+                if let a = cu.app { cuaApp[sid] = a }
+                computerUse(pet, src, cu.app ?? cuaApp[sid], cu.acts)
+            } else if let to = AgentCalls.callee(from: src, tool: tool, input: input) {
                 link(from: src, to: to, id: e["tool_use_id"] as? String ?? "\(sid):\(now())", task: AgentCalls.task(input))
             } else if tool != "Task" && tool != "Agent" && now() - (lastCaption[src] ?? 0) > 0.6 {
                 lastCaption[src] = now()
@@ -386,6 +403,8 @@ final class HuskBrain {
             }
         case "PostToolUse":
             s.awaiting = nil
+            // Desktop computer use moved the real pointer: the click landed where it is now.
+            if ComputerUse.movesPointer(tool) { Effects.ripple(at: NSEvent.mouseLocation) }
             let bad = e["error"].map { !($0 is NSNull) && "\($0)".count > 0 } ?? false
             if !unlink(src, e["tool_use_id"] as? String, failed: bad) && bad { failed(pet, w, tg, tool) }
         case "PostToolUseFailure":
@@ -440,6 +459,7 @@ final class HuskBrain {
             s.awaiting = nil
             pet.retireClone(nil)
             sessions.removeValue(forKey: sid)
+            cuaApp.removeValue(forKey: sid)
             links = links.filter { $0.value.from != src || now() - $0.value.at < 5 }
             refresh()
             if (e["reason"] as? String) != "clear" { pet.play(.wave, loops: 2); pet.say("\(w) 下线了，拜拜～", tag: tg, duration: 3) }
@@ -448,6 +468,48 @@ final class HuskBrain {
         }
         sessions[sid] = s
         refresh()
+    }
+
+    // MARK: Computer use
+
+    /// Play each step of a computer-use call in turn, on the window it works in.
+    private func computerUse(_ pet: Pet, _ src: String, _ app: String?, _ acts: [CUAction]) {
+        let w = ComputerUse.window(for: app)
+        for (k, a) in acts.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(k) * 0.85) { [weak pet] in
+                guard let pet else { return }
+                let p = a.point.flatMap { pt in w.map { ComputerUse.screenPoint(pt, in: $0) } }
+                pet.act(a, window: w, at: p, tag: self.tag(src))
+            }
+        }
+    }
+
+    /// Codex drives the biggest window on screen through cua_repl: look, click, type, scroll, drag, press a key.
+    func demoComputerUse() {
+        let wins = Desktop.scan(excluding: getpid()).wins
+        guard let w = wins.filter({ $0.rect.width > 500 && $0.rect.height > 300 }).max(by: { $0.rect.width * $0.rect.height < $1.rect.width * $1.rect.height }) ?? wins.first,
+              let app = NSRunningApplication(processIdentifier: w.pid) else { return }
+        let id = app.bundleIdentifier ?? app.bundleURL?.path ?? w.owner
+        let W = Int(w.rect.width), H = Int(w.rect.height)
+        let code: [(Double, String)] = [
+            (0.0, "let app = await cua.getApp('\(id)'); await app.getScreenshot();"),
+            (1.8, "await app.click([\(W * 3 / 10), \(H * 3 / 4)]); await app.getAXState();"),
+            (4.2, "await app.typeText('GLORIA 在帮 Codex 打字');"),
+            (7.0, "await app.scroll([\(W / 2), \(H * 3 / 4)], {deltaY: 600});"),
+            (9.4, "await app.drag([\(W * 2 / 5), \(H * 4 / 5)], [\(W * 7 / 10), \(H * 4 / 5)]);"),
+            (11.8, "await app.pressKey('super+s'); await app.getScreenshot();"),
+        ]
+        var steps: [(Double, [String: Any])] = [(0, ["hook_event_name": "UserPromptSubmit", "prompt": "帮我在 \(w.owner) 里点一下、打几个字、截个图"])]
+        for (at, c) in code {
+            steps.append((at + 1.2, ["hook_event_name": "PreToolUse", "tool_name": "mcp__cua_repl__js", "tool_input": ["code": c]]))
+        }
+        steps.append((15.6, ["hook_event_name": "Stop", "last_assistant_message": "在 \(w.owner) 里点了、打了字、截了图。"]))
+        for (at, e) in steps {
+            var ev = e
+            ev["session_id"] = "codex:demo-cua"
+            ev["_source"] = "codex"
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in self?.handle(ev) }
+        }
     }
 
     // MARK: Agents calling agents

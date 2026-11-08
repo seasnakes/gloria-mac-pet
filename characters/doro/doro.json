@@ -11,7 +11,7 @@
  "seatY": 188,
  "grab": [
   96,
-  42
+  43
  ],
  "look": true,
  "scale": 1.0,
@@ -99,6 +99,63 @@
    "row": 14,
    "count": 4,
    "frameMs": 110
+  },
+  "tap": {
+   "row": 22,
+   "count": 8,
+   "frameMs": [
+    130,
+    110,
+    110,
+    90,
+    150,
+    120,
+    120,
+    140
+   ],
+   "facing": "left"
+  },
+  "type": {
+   "row": 23,
+   "count": 8,
+   "frameMs": 110,
+   "loop": true
+  },
+  "snap": {
+   "row": 24,
+   "count": 8,
+   "frameMs": [
+    150,
+    130,
+    260,
+    300,
+    90,
+    120,
+    220,
+    260
+   ]
+  },
+  "drag": {
+   "row": 25,
+   "count": 8,
+   "frameMs": [
+    160,
+    120,
+    110,
+    110,
+    110,
+    110,
+    160,
+    220
+   ],
+   "facing": "left"
+  },
+  "scroll": {
+   "row": 26,
+   "count": 8,
+   "frameMs": 120,
+   "loop": true,
+   "facing": "right"
   }
  }
 }

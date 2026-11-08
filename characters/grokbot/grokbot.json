@@ -1,0 +1,175 @@
+{
+ "id": "grokbot",
+ "name": "GrokBot",
+ "source": "Blender: grokbot_transform_v6.blend (frame 650 pose) via render_grokbot.py",
+ "sheet": "grokbot.png",
+ "cell": [
+  192,
+  208
+ ],
+ "feetY": 202,
+ "seatY": 202,
+ "grab": [
+  96,
+  96
+ ],
+ "look": true,
+ "scale": 1.2,
+ "anims": {
+  "tap": {
+   "row": 0,
+   "count": 8,
+   "frameMs": [
+    130,
+    110,
+    110,
+    90,
+    140,
+    120,
+    120,
+    140
+   ],
+   "facing": "left"
+  },
+  "runRight": {
+   "row": 1,
+   "count": 8,
+   "frameMs": 80
+  },
+  "runLeft": {
+   "row": 2,
+   "count": 8,
+   "frameMs": 80
+  },
+  "wave": {
+   "row": 3,
+   "count": 6,
+   "frameMs": 120
+  },
+  "jump": {
+   "row": 4,
+   "count": 5,
+   "frameMs": 100
+  },
+  "failed": {
+   "row": 5,
+   "count": 8,
+   "frameMs": 150
+  },
+  "waiting": {
+   "row": 6,
+   "count": 6,
+   "frameMs": 150
+  },
+  "review": {
+   "row": 7,
+   "count": 6,
+   "frameMs": 170
+  },
+  "type": {
+   "row": 8,
+   "count": 8,
+   "frameMs": 95,
+   "loop": true
+  },
+  "perch": {
+   "row": 11,
+   "count": 6,
+   "frameMs": [
+    1400,
+    180,
+    110,
+    160,
+    110,
+    180
+   ]
+  },
+  "dance": {
+   "row": 12,
+   "count": 8,
+   "frameMs": 130
+  },
+  "sleep": {
+   "row": 13,
+   "count": 6,
+   "frameMs": 380
+  },
+  "dangle": {
+   "row": 14,
+   "count": 4,
+   "frameMs": 110
+  },
+  "idle": {
+   "row": 15,
+   "count": 24,
+   "frameMs": [
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140,
+    70,
+    70,
+    70,
+    140,
+    140,
+    140,
+    140,
+    140,
+    140
+   ],
+   "loop": true
+  },
+  "work": {
+   "row": 18,
+   "count": 12,
+   "frameMs": 170,
+   "loop": true
+  },
+  "snap": {
+   "row": 20,
+   "count": 8,
+   "frameMs": [
+    160,
+    140,
+    220,
+    260,
+    70,
+    90,
+    180,
+    260
+   ]
+  },
+  "drag": {
+   "row": 21,
+   "count": 8,
+   "frameMs": [
+    140,
+    120,
+    110,
+    110,
+    110,
+    110,
+    120,
+    200
+   ]
+  },
+  "scroll": {
+   "row": 22,
+   "count": 8,
+   "frameMs": 100,
+   "loop": true,
+   "facing": "right"
+  }
+ }
+}

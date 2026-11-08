@@ -115,6 +115,53 @@
    "row": 14,
    "count": 4,
    "frameMs": 120
+  },
+  "tap": {
+   "row": 22,
+   "count": 5,
+   "frameMs": [
+    170,
+    70,
+    230,
+    70,
+    160
+   ],
+   "facing": "left"
+  },
+  "type": {
+   "row": 23,
+   "count": 4,
+   "frameMs": [
+    170,
+    60,
+    170,
+    60
+   ],
+   "loop": true
+  },
+  "snap": {
+   "row": 24,
+   "count": 4,
+   "frameMs": [
+    520,
+    360,
+    80,
+    300
+   ],
+   "facing": "right"
+  },
+  "drag": {
+   "row": 25,
+   "count": 5,
+   "frameMs": [
+    260,
+    80,
+    80,
+    420,
+    100
+   ],
+   "loop": true,
+   "facing": "left"
   }
  }
 }

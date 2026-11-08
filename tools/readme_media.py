@@ -3,9 +3,12 @@ running app with `GLORIA --ctl '{"ctl":"scene","path":...,"scale":1}'`).
 
   python3 tools/readme_media.py [captured-frames-dir]
 
-  docs/hero.gif      the three pets dancing on a window, in sync at 116 BPM
-  docs/cast.png      each pet's main poses
-  docs/together.gif  Claude Code's pet hands a job to Codex's pet and gets the answer back (needs the captured frames)
+  docs/hero.gif          the five pets dancing on a window, in sync at 116 BPM
+  docs/cast.png          each pet's main poses
+  docs/computer-use.png  each pet's computer-use poses (click, type, screenshot, drag, scroll)
+  docs/icon.png          the app icon (from GLORIA.app)
+  docs/together.gif      Claude Code's pet hands a job to Codex's pet and gets the answer back (needs captured frames)
+  docs/computer-use.gif  Codex drives an app and Doro acts it out (captured frames, `cua` subfolder)
 """
 import json, math, sys
 from pathlib import Path
@@ -51,7 +54,9 @@ class Pet:
         return self.cell("dance", int((i % 2 + ph) * 4) % 8)
 
 
-PETS = {"gloria": Pet("gloria", 1.0), "doro": Pet("doro", 1.15), "usagi": Pet("usagi", 1.0)}
+PETS = {"gloria": Pet("gloria", 1.0), "doro": Pet("doro", 1.15), "usagi": Pet("usagi", 1.0), "grokbot": Pet("grokbot", 1.2),
+        "dsh": Pet("dsh", 1.0)}
+NAMES = [("gloria", "GLORIA · 柔彩"), ("doro", "Doro"), ("usagi", "抽象乌萨奇"), ("grokbot", "GrokBot"), ("dsh", "蓝毛小女仆")]
 
 
 def paste(canvas, cell, feet, k, lift=0, sy=1.0):
@@ -79,8 +84,8 @@ def gif(frames, path, ms):
 
 
 def hero():
-    Wd, Hd = 900, 290
-    k = 0.78
+    Wd, Hd = 1000, 290
+    k = 0.72
     beat = 60 / 116
     steps = 64                                   # 8 beats at eighth-beat steps
     frames = []
@@ -101,7 +106,7 @@ def hero():
         ph = b % 1
         bounce = abs(math.sin(math.pi * ph)) * 4
         hit = max(0, 1 - ph * 5)
-        for (cid, x) in (("doro", 250), ("gloria", 450), ("usagi", 650)):
+        for (cid, x) in (("dsh", 180), ("doro", 340), ("gloria", 500), ("usagi", 660), ("grokbot", 820)):
             p = PETS[cid]
             paste(img, p.dance(b), (x, ledge + 2), k * p.mul, lift=bounce, sy=1 - .05 * hit)
         frames.append(img)
@@ -114,8 +119,8 @@ def cast():
             ("被拎起来", lambda p: p.cell("dangle", 1)), ("看光标", lambda p: p.look(45))]
     k = 0.62
     cw, rh = 112, 150
-    names = [("gloria", "GLORIA · 柔彩"), ("doro", "Doro"), ("usagi", "抽象乌萨奇")]
-    img = Image.new("RGBA", (130 + cw * len(cols), 44 + rh * 3), BG + (255,))
+    names = NAMES
+    img = Image.new("RGBA", (130 + cw * len(cols), 44 + rh * len(names)), BG + (255,))
     d = ImageDraw.Draw(img)
     f, fb = ImageFont.truetype(FONT, 14), ImageFont.truetype(FONT, 15)
     for i, (t, _) in enumerate(cols):
@@ -129,13 +134,59 @@ def cast():
             c = fn(p)
             kk = k * p.mul * (0.9 if cid == "doro" else 1)
             feet_y = y + rh - 10
-            if cols[i][0] == "坐窗沿":
+            if cols[i][0] == "坐窗沿" and p.meta.get("seatY", 149) < 200:
                 # The window edge she sits on runs through her seat line; her legs hang in front of the window.
                 sy = feet_y - (202 - p.meta.get("seatY", 149)) * kk
                 d.rectangle((130 + cw * i + 12, sy, 130 + cw * (i + 1) - 12, feet_y + 6), fill=(255, 255, 255), outline=(214, 200, 230))
             paste(img, c, (130 + cw * i + cw / 2, feet_y), kk)
     img.convert("RGB").save(DOCS / "cast.png", optimize=True)
     print("cast.png", img.size)
+
+
+def computer_use():
+    """Each pet's computer-use poses: one telling frame per action."""
+    cols = [("点击", "tap", {"gloria": 2, "doro": 4, "usagi": 4, "grokbot": 4, "dsh": 4}),
+            ("打字", "type", {"gloria": 0, "doro": 0, "usagi": 0, "grokbot": 2, "dsh": 4}),
+            ("截图", "snap", {"gloria": 1, "doro": 4, "usagi": 4, "grokbot": 4, "dsh": 2}),
+            ("拖拽", "drag", {"gloria": 3, "doro": 4, "usagi": 4, "grokbot": 4, "dsh": 4}),
+            ("滚动", "scroll", {"doro": 2, "usagi": 2, "grokbot": 2, "dsh": 4})]
+    k, cw, rh = 0.62, 120, 150
+    img = Image.new("RGBA", (130 + cw * len(cols), 44 + rh * len(NAMES)), BG + (255,))
+    d = ImageDraw.Draw(img)
+    f, fb = ImageFont.truetype(FONT, 14), ImageFont.truetype(FONT, 15)
+    for i, (t, _, _) in enumerate(cols):
+        d.text((130 + cw * i + cw / 2, 22), t, fill=INK, font=f, anchor="mm")
+    for r, (cid, name) in enumerate(NAMES):
+        y = 44 + rh * r
+        if r: d.line((16, y, img.width - 16, y), fill=(232, 222, 242), width=1)
+        d.text((65, y + rh / 2), name, fill=INK, font=fb, anchor="mm")
+        p = PETS[cid]
+        for i, (_, anim, pick) in enumerate(cols):
+            a = anim if anim in p.meta["anims"] else "drag"
+            c = p.cell(a, pick.get(cid, 2))
+            paste(img, c, (130 + cw * i + cw / 2, y + rh - 10), k * p.mul * (0.9 if cid == "doro" else 1))
+    img.convert("RGB").save(DOCS / "computer-use.png", optimize=True)
+    print("computer-use.png", img.size)
+
+
+def icon():
+    import subprocess, tempfile
+    icns = Path("/Applications/GLORIA.app/Contents/Resources/GLORIA.icns")
+    if not icns.exists(): icns = ROOT / "GLORIA.app/Contents/Resources/GLORIA.icns"
+    if not icns.exists(): return
+    tmp = Path(tempfile.mkdtemp()) / "icon.png"
+    subprocess.run(["sips", "-s", "format", "png", str(icns), "--out", str(tmp)], capture_output=True)
+    Image.open(tmp).convert("RGBA").resize((256, 256), Image.LANCZOS).save(DOCS / "icon.png", optimize=True)
+    print("icon.png")
+
+
+def cua(cap, box):
+    files = sorted(Path(cap).glob("f*.png"))
+    if not files: return
+    frames = [Image.open(f).convert("RGBA").crop(box) for f in files]
+    w = 760
+    frames = [im.resize((w, im.height * w // im.width), Image.LANCZOS) for im in frames]
+    gif(frames, DOCS / "computer-use.gif", 100)
 
 
 def together(cap):
@@ -152,4 +203,9 @@ def together(cap):
 if __name__ == "__main__":
     hero()
     cast()
-    if len(sys.argv) > 1: together(sys.argv[1])
+    computer_use()
+    icon()
+    if len(sys.argv) > 1 and sys.argv[1] != "--cua": together(sys.argv[1])
+    if "--cua" in sys.argv:
+        i = sys.argv.index("--cua")
+        cua(sys.argv[i + 1], tuple(int(v) for v in sys.argv[i + 2].split(",")))
