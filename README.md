@@ -10,7 +10,8 @@
 <img src="https://img.shields.io/badge/Apple%20Silicon-native-b9a7f0?style=flat-square" alt="Apple Silicon">
 <img src="https://img.shields.io/badge/Swift-AppKit-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
 <img src="https://img.shields.io/badge/version-0.5.0-7fd3f5?style=flat-square" alt="v0.5.0">
-<img src="https://img.shields.io/badge/联网-不需要-8fd19e?style=flat-square" alt="不联网"><br>
+<img src="https://img.shields.io/badge/联网-不需要-8fd19e?style=flat-square" alt="不联网">
+<a href="LICENSE"><img src="https://img.shields.io/badge/代码-MIT-f7c873?style=flat-square" alt="代码 MIT"></a><br>
 <a href="#claude-code--codex两个化身互相传话"><img src="https://img.shields.io/badge/Claude%20Code-化身-D97757?style=flat-square&logo=claude&logoColor=white" alt="Claude Code"></a>
 <a href="#claude-code--codex两个化身互相传话"><img src="https://img.shields.io/badge/Codex-化身-412991?style=flat-square&logo=openai&logoColor=white" alt="Codex"></a>
 <a href="#computer-use她替-agent-动手"><img src="https://img.shields.io/badge/computer%20use-会演-ff9ec8?style=flat-square" alt="computer use"></a>
@@ -165,15 +166,17 @@ $X --ctl '{"ctl":"menu"}'                                 # 打印菜单
 <summary><b>重新生成角色素材</b></summary>
 
 ```bash
-python3 tools/gloria_sheet.py              # GLORIA：原画 + 平滑思考/舞蹈/操作电脑（需要 OpenCV）
-/Users/seasnake/Developer/DoroPet-macos-env/bin/python characters/doro/render_doropet.py
-/Users/seasnake/Developer/animated-drawings-local/.venv/bin/python characters/usagi/ad_usagi.py --build
+python3 tools/gloria_sheet.py                                  # GLORIA：原画 + 平滑思考/舞蹈/操作电脑（需要 OpenCV）
+DOROPET=~/Developer/DoroPet-macos $DOROPET_PYTHON characters/doro/render_doropet.py   # Doro（live2d-py + PyQt5）
+$ANIMATED_DRAWINGS/.venv/bin/python characters/usagi/ad_usagi.py --build              # 乌萨奇（Animated Drawings）
 /Applications/Blender.app/Contents/MacOS/Blender -b <grokbot_transform_v6.blend> --python characters/grokbot/render_grokbot.py
-python3 characters/grokbot/pack_grokbot.py
-python3 tools/import_dsh.py <dsh-pet>/dsh-pet/assets   # 蓝毛小女仆
-python3 tools/readme_media.py [截图帧目录]   # 这份 README 里的图
+python3 characters/grokbot/pack_grokbot.py                     # GrokBot
+python3 tools/import_dsh.py <dsh-pet>/dsh-pet/assets           # 蓝毛小女仆
+python3 tools/readme_media.py [截图帧目录]                       # 这份 README 里的图
 bash build.sh
 ```
+
+`DOROPET` 指向本机的 DoroPet-macos 目录（[DoroPet](https://github.com/waterfeet/DoroPet_V3) 的 macOS 版，默认 `~/Developer/DoroPet-macos`）；`ANIMATED_DRAWINGS` 指向 [AnimatedDrawings](https://github.com/facebookresearch/AnimatedDrawings) 的本地副本（默认 `~/Developer/animated-drawings-local`）。只是使用已经生成好的精灵图的话，这些都不需要。
 
 所有角色都用同一套格子：8 列、每格 192×208、脚踩 y=202，第 9–10 行是 16 个看的方向。动作的行号、帧数、每帧时长、锚点和朝向（`facing`）写在各自的 `<id>.json` 里，长动作可以跨行。
 
@@ -192,6 +195,18 @@ bash build.sh
 
 </details>
 
+## 素材与许可
+
+代码（`Sources/`、`tools/`、各角色的生成脚本）以 [MIT](LICENSE) 授权。角色美术不在 MIT 范围内，各自的来源如下：
+
+| 角色 | 来源 | 说明 |
+| --- | --- | --- |
+| GLORIA · 柔彩 | 作者的原创角色 | 精灵图保留所有权利 |
+| Doro | [DoroPet](https://github.com/waterfeet/DoroPet_V3)（Apache-2.0）自带的 Live2D Doro 模型，离屏渲染成帧 | Doro 是网络同人形象；本仓库只含渲染出的图，不含模型文件 |
+| 抽象乌萨奇 | 一张乌萨奇（《ちいかわ》，©ナガノ）毛绒玩偶的照片 | 同人二创，仅供个人非商业使用 |
+| GrokBot | 作者的 Blender 工程 | 机身上的标志是 xAI 的 Grok 标志 |
+| 蓝毛小女仆 | [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 的透明动画 | MIT，原许可见 `characters/dsh/NOTICE.txt` |
+
 ## Star History
 
 <a href="https://star-history.com/#seasnakes/gloria-mac-pet&Date">
@@ -203,4 +218,4 @@ bash build.sh
 
 ---
 
-<sub>灵感来自 <a href="https://github.com/lachydotmcg/capri-desktop">Capri</a>，没有使用它的代码或美术。蓝毛小女仆的动画来自 <a href="https://github.com/PC2005-cloud/dsh-pet">dsh-pet</a>（MIT）。GrokBot 来自作者的 Blender 工程。Doro 和乌萨奇是同人形象，仅供个人使用。</sub>
+<sub>灵感来自 <a href="https://github.com/lachydotmcg/capri-desktop">Capri</a>，没有使用它的代码或美术。各角色素材的来源见<a href="#素材与许可">素材与许可</a>。</sub>

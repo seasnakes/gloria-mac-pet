@@ -3,7 +3,9 @@ Doro from DoroPet-macos (Live2D head + StandingDoro's drawn body) → desk-pet s
 8 columns × 15 rows of 192×208 cells, feet on y=202, body centre on x=96.
 
 Run with DoroPet's own environment (live2d-py, PyQt5):
-  /Users/seasnake/Developer/DoroPet-macos-env/bin/python render_doropet.py
+  $DOROPET_PYTHON render_doropet.py        (a Python with live2d-py + PyQt5, e.g. DoroPet's own venv)
+
+DoroPet-macos is found at $DOROPET (default ~/Developer/DoroPet-macos).
 
 Each frame is drawn offscreen by DoroPet's real pieces — the Doro.model3.json head and StandingDoro.draw_body —
 with a fixed time, head angle and expression, so the sheet is reproducible. Expressions are applied as the
@@ -13,7 +15,7 @@ import json, math, os, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DORO = Path("/Users/seasnake/Developer/DoroPet-macos/opendoro")
+DORO = Path(os.environ.get("DOROPET", "~/Developer/DoroPet-macos")).expanduser() / "opendoro"
 MODEL = str(DORO / "models/Doro/Doro.model3.json")
 sys.path.insert(0, str(DORO)); os.chdir(DORO)
 

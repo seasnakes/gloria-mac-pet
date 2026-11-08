@@ -1,13 +1,13 @@
 """
-Abstract Usagi with Animated Drawings (facebookresearch/AnimatedDrawings, local copy in
-/Users/seasnake/Developer/animated-drawings-local) — the same rig approach as DoroPet's standing-prototype/animated-rig.
+Abstract Usagi with Animated Drawings (facebookresearch/AnimatedDrawings, a local checkout set by $ANIMATED_DRAWINGS,
+default ~/Developer/animated-drawings-local) — the same rig approach as DoroPet's standing-prototype/animated-rig.
 
 The plush photo becomes an AD character (texture.png, mask.png, char_cfg.yaml in ./ad). AD builds its ARAP mesh from
 the mask; BVH clips are retargeted onto the 16-joint skeleton (plus a `head` joint for tilts), and the mesh bends
 with ARAP. Instead of AD's GLFW window, this script takes the deformed vertices straight from AnimatedDrawing and
 paints the photo onto them with OpenCV, so it runs offscreen and keeps alpha.
 
-  /Users/seasnake/Developer/animated-drawings-local/.venv/bin/python ad_usagi.py
+  $ANIMATED_DRAWINGS/.venv/bin/python ad_usagi.py --build      (--sample [out dir] for a clip overview)
 """
 import json, math, os, sys
 from pathlib import Path
@@ -16,7 +16,7 @@ import cv2
 import yaml
 
 HERE = Path(__file__).resolve().parent
-ADROOT = Path("/Users/seasnake/Developer/animated-drawings-local")
+ADROOT = Path(os.environ.get("ANIMATED_DRAWINGS", "~/Developer/animated-drawings-local")).expanduser()
 CHAR = HERE / "ad"
 sys.path.insert(0, str(ADROOT))
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
@@ -197,7 +197,8 @@ def flat(rgba_f):
     return np.clip(rgba_f[..., :3] + bg * (1 - a), 0, 255).astype(np.uint8)
 
 if "--sample" in sys.argv:
-    S = Path("/private/tmp/claude-501/-Users-seasnake--claude-spares-spare-cAi3qC/487189f9-0051-41ac-a51e-e83b05e58ff9/scratchpad")
+    i = sys.argv.index("--sample")
+    S = Path(sys.argv[i + 1]) if len(sys.argv) > i + 1 and not sys.argv[i + 1].startswith("-") else HERE
     rows = []
     w, _ = pose_world(); rows.append(("rest", [flat(PAINT.paint(w, pad=320, k=0.32))]))
     for motion, rt in [("wave_hello.yaml", "fair1_ppf.yaml"), ("jumping.yaml", "fair1_ppf.yaml"), ("dab.yaml", "fair1_ppf.yaml"),

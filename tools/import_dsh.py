@@ -236,7 +236,8 @@ def main():
         "hello": ["你好呀～", "一起加油！", "Ciallo～"],
     }
     meta = {"id": args.id, "name": name,
-            "source": f"dsh-pet ({assets}) via tools/import_dsh.py; clips: " + ", ".join(f"{k}={v}" for k, v in used.items()),
+            "source": "dsh-pet (https://github.com/PC2005-cloud/dsh-pet, MIT) via tools/import_dsh.py; clips: "
+                      + ", ".join(f"{k}={v}" for k, v in used.items()),
             "sheet": f"{args.id}.png", "cell": [CW, CH], "feetY": FEET, "seatY": FEET, "grab": [96, 30], "look": True, "scale": 1.0,
             "persona": {"title": f"{name} · DSH", "tag": "DSH", "scale": 1.0, **lines},
             "anims": meta_anims}

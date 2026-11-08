@@ -9,8 +9,8 @@
 In-betweens move the nearer key frame along the flow field instead of cross-fading two frames, so there are no
 ghosted double eyes or see-through arms; every pixel still comes from an approved frame.
 
-Run with any Python that has OpenCV + Pillow, e.g.
-  /Users/seasnake/Developer/animated-drawings-local/.venv/bin/python tools/gloria_sheet.py
+Run with any Python that has OpenCV + Pillow + numpy:
+  python3 tools/gloria_sheet.py
 """
 import json, sys
 from pathlib import Path
