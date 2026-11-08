@@ -1,0 +1,84 @@
+{
+ "id": "usagi",
+ "name": "抽象乌萨奇",
+ "sheet": "usagi.png",
+ "cell": [
+  192,
+  208
+ ],
+ "feetY": 202,
+ "seatY": 149,
+ "grab": [
+  96,
+  42
+ ],
+ "look": true,
+ "scale": 1.0,
+ "anims": {
+  "idle": {
+   "row": 0,
+   "count": 6,
+   "frameMs": 180
+  },
+  "runRight": {
+   "row": 1,
+   "count": 8,
+   "frameMs": 85
+  },
+  "runLeft": {
+   "row": 2,
+   "count": 8,
+   "frameMs": 85
+  },
+  "wave": {
+   "row": 3,
+   "count": 4,
+   "frameMs": 130
+  },
+  "jump": {
+   "row": 4,
+   "count": 5,
+   "frameMs": 100
+  },
+  "failed": {
+   "row": 5,
+   "count": 8,
+   "frameMs": 140
+  },
+  "waiting": {
+   "row": 6,
+   "count": 6,
+   "frameMs": 150
+  },
+  "work": {
+   "row": 7,
+   "count": 6,
+   "frameMs": 180
+  },
+  "review": {
+   "row": 8,
+   "count": 6,
+   "frameMs": 150
+  },
+  "perch": {
+   "row": 11,
+   "count": 6,
+   "frameMs": 200
+  },
+  "dance": {
+   "row": 12,
+   "count": 8,
+   "frameMs": 130
+  },
+  "sleep": {
+   "row": 13,
+   "count": 6,
+   "frameMs": 320
+  },
+  "dangle": {
+   "row": 14,
+   "count": 4,
+   "frameMs": 110
+  }
+ }
+}

@@ -1,0 +1,7 @@
+# Build output (bash build.sh)
+GLORIA.app/
+
+# System and tool clutter
+.DS_Store
+__pycache__/
+*.pyc

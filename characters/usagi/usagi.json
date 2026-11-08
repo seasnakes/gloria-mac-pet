@@ -1,0 +1,101 @@
+{
+ "id": "usagi",
+ "name": "抽象乌萨奇",
+ "source": "Animated Drawings (ARAP mesh + BVH retargeting) on source.png; see ad/",
+ "sheet": "usagi.png",
+ "cell": [
+  192,
+  208
+ ],
+ "feetY": 202,
+ "seatY": 130,
+ "grab": [
+  96,
+  48
+ ],
+ "look": true,
+ "scale": 1.0,
+ "rowFit": {
+  "0": 1.0,
+  "1": 0.995,
+  "3": 1.0,
+  "4": 1.0,
+  "5": 0.985,
+  "6": 0.98,
+  "7": 1.0,
+  "8": 0.98,
+  "9": 1.0,
+  "10": 1.0,
+  "11": 0.921,
+  "12": 0.995,
+  "13": 1.0,
+  "14": 1.0
+ },
+ "anims": {
+  "idle": {
+   "row": 0,
+   "count": 6,
+   "frameMs": 180
+  },
+  "runRight": {
+   "row": 1,
+   "count": 8,
+   "frameMs": 90
+  },
+  "runLeft": {
+   "row": 2,
+   "count": 8,
+   "frameMs": 90
+  },
+  "wave": {
+   "row": 3,
+   "count": 4,
+   "frameMs": 130
+  },
+  "jump": {
+   "row": 4,
+   "count": 5,
+   "frameMs": 110
+  },
+  "failed": {
+   "row": 5,
+   "count": 8,
+   "frameMs": 150
+  },
+  "waiting": {
+   "row": 6,
+   "count": 6,
+   "frameMs": 140
+  },
+  "work": {
+   "row": 7,
+   "count": 6,
+   "frameMs": 200
+  },
+  "review": {
+   "row": 8,
+   "count": 6,
+   "frameMs": 150
+  },
+  "perch": {
+   "row": 11,
+   "count": 6,
+   "frameMs": 200
+  },
+  "dance": {
+   "row": 12,
+   "count": 8,
+   "frameMs": 140
+  },
+  "sleep": {
+   "row": 13,
+   "count": 6,
+   "frameMs": 340
+  },
+  "dangle": {
+   "row": 14,
+   "count": 4,
+   "frameMs": 110
+  }
+ }
+}

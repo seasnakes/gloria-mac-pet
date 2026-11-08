@@ -1,0 +1,84 @@
+{
+ "id": "doro",
+ "name": "Doro",
+ "sheet": "doro.png",
+ "cell": [
+  192,
+  208
+ ],
+ "feetY": 202,
+ "seatY": 188,
+ "grab": [
+  96,
+  88
+ ],
+ "look": true,
+ "scale": 1.15,
+ "anims": {
+  "idle": {
+   "row": 0,
+   "count": 6,
+   "frameMs": 200
+  },
+  "runRight": {
+   "row": 1,
+   "count": 8,
+   "frameMs": 95
+  },
+  "runLeft": {
+   "row": 2,
+   "count": 8,
+   "frameMs": 95
+  },
+  "wave": {
+   "row": 3,
+   "count": 4,
+   "frameMs": 140
+  },
+  "jump": {
+   "row": 4,
+   "count": 5,
+   "frameMs": 100
+  },
+  "failed": {
+   "row": 5,
+   "count": 8,
+   "frameMs": 140
+  },
+  "waiting": {
+   "row": 6,
+   "count": 6,
+   "frameMs": 170
+  },
+  "work": {
+   "row": 7,
+   "count": 6,
+   "frameMs": 200
+  },
+  "review": {
+   "row": 8,
+   "count": 6,
+   "frameMs": 160
+  },
+  "perch": {
+   "row": 11,
+   "count": 6,
+   "frameMs": 190
+  },
+  "dance": {
+   "row": 12,
+   "count": 8,
+   "frameMs": 130
+  },
+  "sleep": {
+   "row": 13,
+   "count": 6,
+   "frameMs": 340
+  },
+  "dangle": {
+   "row": 14,
+   "count": 4,
+   "frameMs": 110
+  }
+ }
+}
