@@ -138,7 +138,8 @@ final class Clone {
 final class Pet {
     enum Mode: String { case perched, walking, held, airborne, hopping }
 
-    let sprites: Sprites
+    let ch: Character
+    var sprites: Sprites { ch.sprites }
     let body: Body
     let bubble = Bubble()
     let music: MusicWatch
@@ -189,7 +190,8 @@ final class Pet {
     private var dock: (tile: CGFloat, large: CGFloat, on: Bool) = (64, 128, false)
     private var lastDockRead: Double = -10
     private var bounceStart: Double = 0, bounceUntil: Double = 0
-    private var chasing = false
+    private(set) var chasing = false
+    private lazy var bodyHalf = CGFloat(sprites.halfWidth(ch.cell(.idle, 0)))
     private var chaseLost: Double?
     private var lastPounce: Double = 0
     private var lastMouse = CGPoint.zero
@@ -210,7 +212,8 @@ final class Pet {
     private var heldVX: CGFloat = 0
 
     // Code / Husk mode state, set by HuskBrain
-    var working = false
+    var working = false { didSet { if working && !oldValue { workSince = now() } } }
+    private var workSince: Double = 0
     var workCaption = ""
     var awaiting: String?
     var awaitingTag = "CLAUDE"
@@ -221,18 +224,24 @@ final class Pet {
     var spriteSize: CGSize { body.spriteSize }
     var gravity: CGFloat { 2600 }
 
-    init(sprites: Sprites, music: MusicWatch) {
-        self.sprites = sprites
+    /// The other pets on screen (for meeting up and passing notes between agents).
+    var peers: () -> [Pet] = { [] }
+    var others: [Pet] { peers().filter { $0 !== self } }
+    /// Which agent she stands in for ("Claude Code", "Codex"), shown in her menu.
+    var roles: [String] = []
+
+    init(ch: Character, music: MusicWatch) {
+        self.ch = ch
         self.music = music
-        body = Body(scale: CGFloat(Prefs.scale) * Character.current.scaleMul)
+        body = Body(scale: CGFloat(Prefs.scale) * ch.scaleMul)
         body.view.pet = self
-        body.show(Anim.idle.cell(0), sprites)
+        body.show(ch.cell(.idle, 0), sprites)
         body.panel.ignoresMouseEvents = true
     }
 
     // MARK: Lifecycle
 
-    func start(at: CGPoint? = nil) {
+    func start(at: CGPoint? = nil, slot: Int = 0) {
         rescan(force: true)
         if let at {
             // Switching characters: drop in where the previous one was.
@@ -243,10 +252,10 @@ final class Pet {
             body.place(feet: feet)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
                 self?.play(.wave, loops: 2)
-                self?.say(Character.current.greeting, tag: Character.current.tag, duration: 3)
+                self?.say(self?.ch.lines.greeting ?? "", tag: self?.ch.tag, duration: 3)
             }
         } else {
-            summon(entrance: true)
+            summon(entrance: true, slot: slot)
         }
         body.panel.orderFrontRegardless()
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
@@ -264,7 +273,7 @@ final class Pet {
 
     func setScale(_ s: CGFloat) {
         Prefs.scale = Double(s)
-        let k = s * Character.current.scaleMul
+        let k = s * ch.scaleMul
         body.resize(k)
         for c in clones { c.body.resize(k * 0.62) }
         rescan(force: true)
@@ -272,7 +281,7 @@ final class Pet {
     }
 
     /// Drop her onto the front window (or the floor) from above.
-    func summon(entrance: Bool) {
+    func summon(entrance: Bool, slot: Int = 0) {
         rescan(force: true)
         let mouse = NSEvent.mouseLocation
         let scr = Desktop.nearestScreen(mouse) ?? NSScreen.main
@@ -285,8 +294,10 @@ final class Pet {
         let target = roomy.first ?? onScreen.first { $0.isFloor } ?? ledges.last
         guard let l = target else { return }
         let inset = min(spriteSize.width * 0.32, (l.right - l.left) / 2)
-        let x = mouse.x > l.left + inset && mouse.x < l.right - inset && !l.isFloor
+        let spread = [0, 1, -1, 2, -2][min(slot, 4)] * spriteSize.width * 0.95
+        let base = mouse.x > l.left + inset && mouse.x < l.right - inset && !l.isFloor
             ? mouse.x : clamp(l.right - max(90, (l.right - l.left) * 0.22), l.left + inset, l.right - inset)
+        let x = clamp(base - spread, l.left + inset, l.right - inset)
         // Drop from just above the target, below any other ledge over that spot so she can't catch it first.
         var ceiling = (scr?.visibleFrame.maxY ?? l.y + 400) - spriteSize.height - 4
         for o in ledges where o.y > l.y && x >= o.left - 8 && x <= o.right + 8 { ceiling = min(ceiling, o.y - 2) }
@@ -300,7 +311,7 @@ final class Pet {
         if entrance {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 self?.play(.wave, loops: 2)
-                self?.say(Character.current.greeting, tag: Character.current.tag)
+                self?.say(self?.ch.lines.greeting ?? "", tag: self?.ch.tag)
             }
         }
     }
@@ -372,8 +383,8 @@ final class Pet {
 
     /// Where her feet go while she hangs from the cursor by the back of her neck.
     private func heldFeet(_ m: CGPoint, _ t: Double) -> CGPoint {
-        guard sprites.hasExtras else { return CGPoint(x: m.x + grab.dx, y: m.y + grab.dy) }
-        let hang = CGVector(dx: 0, dy: -Character.current.hang * scale)
+        guard ch.hasExtras else { return CGPoint(x: m.x + grab.dx, y: m.y + grab.dy) }
+        let hang = CGVector(dx: 0, dy: -ch.hang * scale)
         let u = CGFloat(clamp((t - heldSince) / 0.16, 0, 1))
         return CGPoint(x: m.x + lerp(grab.dx, hang.dx, u), y: m.y + lerp(grab.dy, hang.dy, u))
     }
@@ -385,7 +396,7 @@ final class Pet {
         let side: CGFloat = clones.count % 2 == 0 ? 1 : -1
         let dist = spriteSize.width * (0.62 + 0.42 * CGFloat(clones.count / 2))
         let c = Clone(id: id, scale: scale * 0.62, target: side * dist)
-        c.body.show(Anim.idle.cell(0), sprites)
+        c.body.show(ch.cell(.idle, 0), sprites)
         c.body.place(feet: feet)
         c.body.panel.level = body.panel.level
         c.body.panel.alphaValue = 0.88
@@ -399,6 +410,8 @@ final class Pet {
     }
 
     var cloneCount: Int { clones.filter { $0.leaving == nil }.count }
+    /// Windows she occupies in the stack: herself, her clones and her bubble.
+    var stackSize: Int { 1 + clones.count + (bubble.visible ? 1 : 0) }
 
     // MARK: Mouse
 
@@ -457,7 +470,7 @@ final class Pet {
             grumpyUntil = t + 5
             play(.failed)
             sparkle("💢", color: Palette.pink, count: 2)
-            say(Character.current.angry.randomElement()!, duration: 2.6)
+            say(ch.lines.angry.randomElement()!, duration: 2.6)
             return
         }
         if awaiting != nil {
@@ -467,7 +480,7 @@ final class Pet {
         play(.wave, loops: 2)
         sparkle()
         if Int.random(in: 0..<3) == 0 || !bubble.visible {
-            say(Character.current.pats.randomElement()!, duration: 2.4)
+            say(ch.lines.pats.randomElement()!, duration: 2.4)
         }
     }
 
@@ -486,7 +499,8 @@ final class Pet {
             feet = heldFeet(m, t)
             if t > h.until { synthHold = nil; mode = .airborne; vel = CGVector(dx: 600, dy: 500) }
         }
-        if t - lastIdleCheck > 1 { lastIdleCheck = t; checkSleep(t) }
+        if t - lastIdleCheck > 1 { lastIdleCheck = t; checkSleep(t); keepApart(t) }
+        if let m = meet, mode == .perched || t > m.deadline { meet = nil; m.fire() }
         switch mode {
         case .held: break
         case .airborne: fly(dt)
@@ -572,11 +586,12 @@ final class Pet {
         landSquash = (now(), clamp(impact / 2400, 0.08, 0.28))
         if impact > 1700 {
             shot = (.failed, now(), 1, nil)
-            say(Character.current.ouch.randomElement()!, duration: 2)
+            say(ch.lines.ouch.randomElement()!, duration: 2)
         } else if impact > 300 {
             shot = (.jump, now(), 1, [3, 4])
         }
         nextIdea = now() + Double.random(in: 4...9)
+        landedAt = now()
         updateLevel()
     }
 
@@ -683,7 +698,9 @@ final class Pet {
         guard let hi = order.firstIndex(of: host) else { return }
         let mi = order.firstIndex(of: me)
         if body.panel.level != .normal { body.panel.level = .normal }
-        if mi == nil || mi! > hi || hi - mi! > 1 + clones.count + (bubble.visible ? 1 : 0) {
+        // Other pets on the same window share the slots just above it.
+        let room = peers().filter { $0.seat?.win == host }.reduce(0) { $0 + $1.stackSize }
+        if mi == nil || mi! > hi || hi - mi! > max(room, stackSize) {
             body.panel.order(.above, relativeTo: Int(host))
             for c in clones { c.body.panel.level = .normal; c.body.panel.order(.above, relativeTo: body.panel.windowNumber) }
         }
@@ -751,8 +768,11 @@ final class Pet {
         }
         let inBand = m.y >= feet.y + dockLift - 8 && m.y <= feet.y + dockLift + spriteSize.height * 1.1 && m.x >= s.left && m.x <= s.right
         let dx = m.x - feet.x
+        // She stops beside the cursor, never under it: her opaque pixels would swallow the clicks.
+        let standOff = bodyHalf * scale + 14 * scale / 0.62
         if !chasing {
-            if inBand && abs(dx) > 70 && abs(dx) < 460 && mouseSpeed > 60 && t - lastPounce > 2.5 && !body.hits(m, sprites) {
+            if inBand && abs(dx) > standOff + 40 && abs(dx) < 460 && mouseSpeed > 60 && t - lastPounce > 2.5 && !body.hits(m, sprites)
+                && !others.contains(where: { $0.chasing }) {
                 chasing = true; chaseLost = nil; mode = .walking
             }
             return
@@ -764,12 +784,16 @@ final class Pet {
         }
         chaseLost = nil
         let margin = spriteSize.width * 0.3
-        walkTarget = clamp(m.x, s.left + margin, s.right - margin)
-        if mode != .walking { mode = .walking }
-        if abs(dx) < 26 * scale / 0.62 {
+        let side: CGFloat = dx >= 0 ? 1 : -1          // cursor to her right → she stops on its left
+        let target = clamp(m.x - side * standOff, s.left + margin, s.right - margin)
+        walkTarget = target
+        if mode != .walking && abs(target - feet.x) > 2 { mode = .walking }
+        if abs(target - feet.x) < 8 * scale / 0.62 || (mode == .perched && abs(dx) <= standOff + 4) {
             chasing = false
             mode = .perched
             lastPounce = t
+            lookDir = dx >= 0 ? 90 : 270
+            lookUntil = t + 1.4
             play(.jump)
             sparkle("✦", color: Palette.periwinkle, count: 2)
             if Int.random(in: 0..<3) == 0 { say(["抓到了！", "嘿！", "跑不掉的～"].randomElement()!, duration: 1.4) }
@@ -777,6 +801,73 @@ final class Pet {
     }
 
     func debugDockBounce() { bounceUntil = 0; dockBounce() }
+
+    // MARK: Together (several pets; agents passing notes to each other)
+
+    private var meet: (to: Pet, deadline: Double, fire: () -> Void)?
+    private(set) var landedAt: Double = 0
+
+    /// Same window top, or the floor of the same screen.
+    func sameLedge(_ o: Pet) -> Bool {
+        guard let a = seat, let b = o.seat else { return false }
+        if let wa = a.win, let wb = b.win { return wa == wb }
+        return a.isFloor && b.isFloor && abs(a.y - b.y) < 2 && Desktop.nearestScreen(feet) == Desktop.nearestScreen(o.feet)
+    }
+
+    func face(_ x: CGFloat, for seconds: Double = 2.2) {
+        lookDir = x > feet.x ? 90 : 270
+        lookUntil = now() + seconds
+    }
+
+    /// Where a note leaves her hands / lands on her chest.
+    var hands: CGPoint { CGPoint(x: feet.x, y: feet.y + dockLift + spriteSize.height * 0.5) }
+
+    /// Walk over to another pet when they share a ledge, then throw her a note.
+    func passNote(to o: Pet, say text: String?, tag: String?, note: String?, noteTag: String?) {
+        let fire = { [weak self, weak o] in
+            guard let self, let o else { return }
+            self.face(o.feet.x)
+            self.play(.wave)
+            if let text { self.say(text, tag: tag, duration: 3.4) }
+            Courier.fly(from: self, to: o) { [weak o, weak self] in
+                guard let o else { return }
+                o.gotNote(from: self, note: note, tag: noteTag)
+            }
+        }
+        let w = spriteSize.width
+        if mode == .perched || mode == .walking, sameLedge(o), abs(o.feet.x - feet.x) > w * 1.9, awaiting == nil, let s = seat {
+            let side: CGFloat = o.feet.x > feet.x ? -1 : 1
+            let margin = w * 0.3
+            walkTarget = clamp(o.feet.x + side * w * 1.2, s.left + margin, s.right - margin)
+            chasing = false
+            mode = .walking
+            meet = (o, now() + 2.6, fire)
+        } else {
+            fire()
+        }
+    }
+
+    func gotNote(from o: Pet?, note: String?, tag: String?) {
+        wake(quiet: true)
+        if let o { face(o.feet.x) }
+        play(.jump)
+        sparkle("✉︎", color: Palette.periwinkle, count: 1)
+        if let note { say(note, tag: tag, duration: 3.8) }
+    }
+
+    /// Two pets standing on top of each other: the one who arrived last steps aside.
+    private func keepApart(_ t: Double) {
+        guard mode == .perched, shot == nil, meet == nil, !chasing, let s = seat else { return }
+        let w = spriteSize.width
+        guard let o = others.first(where: { ($0.mode == .perched || $0.mode == .walking) && sameLedge($0)
+                                            && abs($0.feet.x - feet.x) < w * 0.55 && $0.landedAt <= landedAt }) else { return }
+        let margin = w * 0.3
+        let prefer: CGFloat = feet.x >= o.feet.x ? 1 : -1
+        for side in [prefer, -prefer] {
+            let x = o.feet.x + side * w * 0.95
+            if x >= s.left + margin && x <= s.right - margin { walkTarget = x; mode = .walking; return }
+        }
+    }
 
     /// Hide everything and stop ticking (switching characters).
     func teardown() {
@@ -806,6 +897,16 @@ final class Pet {
         } else if r < 0.74 {
             lookDir = Bool.random() ? 90 : 270
             lookUntil = t + 1.6
+        } else if r < 0.8, let o = others.first(where: { sameLedge($0) && abs($0.feet.x - feet.x) < 600 && $0.mode == .perched }) {
+            // Say hi to the pet next to her.
+            face(o.feet.x)
+            play(.wave)
+            if Bool.random() { say(ch.lines.hello.randomElement()!, duration: 2) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak o, weak self] in
+                guard let o, let self, o.mode == .perched, !o.working, o.awaiting == nil else { return }
+                o.face(self.feet.x)
+                o.play(.wave)
+            }
         } else if r < 0.84 {
             // Hop to another window that's close by.
             let near = ledges.filter { l in
@@ -820,13 +921,13 @@ final class Pet {
     // MARK: Animation
 
     private func animate(_ t: Double, _ dt: CGFloat) {
-        var cell = Anim.idle.cell(0)
+        var cell = ch.cell(.idle, 0)
         var targetRot: CGFloat = 0
         var sx: CGFloat = 1, sy: CGFloat = 1, dx: CGFloat = 0, lift: CGFloat = 0
         var alpha: Float = 1
         var pivot: CGFloat = 0                      // rotate around a point this far above her feet (0 = the feet)
         let k = scale / 0.62
-        let extras = sprites.hasExtras
+        let extras = ch.hasExtras
         let dancing = music.dancing && (mode == .perched)
 
         if dancing != wasDancing {
@@ -848,32 +949,32 @@ final class Pet {
             heldVX += (vx - heldVX) * 0.25
             if extras {
                 // Hanging by the back of her neck: flail, and swing like a pendulum behind the cursor.
-                cell = Anim.dangle.cell(Anim.dangle.index(at: t - heldSince))
+                cell = ch.cell(.dangle, ch.index(.dangle, at: t - heldSince))
                 targetRot = clamp(-heldVX * 0.02, -30, 30) + CGFloat(sin(t * 4.2)) * 4
-                pivot = Character.current.hang * scale
+                pivot = ch.hang * scale
             } else {
-                cell = abs(heldVX) > 160 ? (heldVX > 0 ? Anim.runRight : Anim.runLeft).cell(Int(t / 0.06)) : Anim.waiting.cell(Int(t / 0.2) % 3)
+                cell = abs(heldVX) > 160 ? ch.cell(heldVX > 0 ? .runRight : .runLeft, Int(t / 0.06)) : ch.cell(.waiting, Int(t / 0.2) % 3)
                 targetRot = clamp(-heldVX * 0.018, -24, 24) + CGFloat(sin(t * 7)) * 3
             }
         case .airborne:
-            cell = extras ? Anim.dangle.cell(Int(t / 0.09)) : Anim.jump.cell(2)
+            cell = extras ? ch.cell(.dangle, Int(t / 0.09)) : ch.cell(.jump, 2)
             targetRot = clamp(-vel.dx * 0.014, -32, 32) + CGFloat(sin(t * 16)) * min(8, abs(vel.dx) / 120)
         case .hopping:
             if let h = hop {
                 let u = (t - h.start - 0.12) / h.dur
-                cell = Anim.jump.cell(u < 0 ? 1 : (u < 0.8 ? 2 : 3))
+                cell = ch.cell(.jump, u < 0 ? 1 : (u < 0.8 ? 2 : 3))
                 if u < 0 { sy = 0.92; sx = 1.05 }
                 targetRot = h.to.x > h.from.x ? -6 : 6
             }
         case .walking:
-            cell = (walkTarget > feet.x ? Anim.runRight : Anim.runLeft).cell(Int(t / Anim.runRight.frameTime))
+            cell = ch.cell(walkTarget > feet.x ? .runRight : .runLeft, Int(t / ch.frameTime(.runRight)))
             lift = CGFloat(abs(sin(t * 14))) * 2 * k
         case .perched:
             if let s = shot {
-                let ft = s.anim.frameTime
-                let seq = s.cells ?? Array(0..<s.anim.count)
+                let ft = ch.frameTime(s.anim)
+                let seq = s.cells ?? Array(0..<ch.count(s.anim))
                 let i = Int((t - s.start) / ft)
-                if i >= seq.count * s.loops { shot = nil; idleStart = t } else { cell = s.anim.cell(seq[i % seq.count]) }
+                if i >= seq.count * s.loops { shot = nil; idleStart = t } else { cell = ch.cell(s.anim, seq[i % seq.count]) }
                 if s.anim == .jump && s.cells == nil, i < seq.count {
                     // A little hop in place for the jump reaction.
                     let u = (t - s.start) / (ft * Double(seq.count))
@@ -882,7 +983,7 @@ final class Pet {
             }
             if shot == nil {
                 if let _ = awaiting {
-                    cell = Anim.waiting.cell(Int(t / Anim.waiting.frameTime))
+                    cell = ch.cell(.waiting, Int(t / ch.frameTime(.waiting)))
                     // A little attention bounce every two seconds.
                     let u = t.truncatingRemainder(dividingBy: 2.2)
                     if u < 0.36 { lift = CGFloat(sin(u / 0.36 * .pi)) * 9 * k }
@@ -890,18 +991,18 @@ final class Pet {
                     // Hopping along with a bouncing Dock icon.
                     let u = (t - bounceStart) / 0.55
                     let ph = u - floor(u)
-                    cell = Anim.jump.cell(ph < 0.12 ? 1 : (ph < 0.8 ? 2 : 3))
+                    cell = ch.cell(.jump, ph < 0.12 ? 1 : (ph < 0.8 ? 2 : 3))
                     lift = CGFloat(max(0, sin(ph * .pi))) * 22 * k
                 } else if asleep && extras {
-                    cell = Anim.sleep.cell(Anim.sleep.index(at: t, speed: 1.3))
+                    cell = ch.cell(.sleep, ch.index(.sleep, at: t, speed: 1.3))
                     if t - lastZ > 1.5 { lastZ = t; body.particle("z", color: Palette.periwinkle, size: CGFloat.random(in: 12...17) * k) }
                 } else if dancing {
                     (cell, targetRot, sx, sy, dx, lift) = dance(t)
                 } else if t < jostleUntil {
-                    cell = canSit ? Anim.perch.cell(0) : Anim.waiting.cell(0)
+                    cell = canSit ? ch.cell(.perch, 0) : ch.cell(.waiting, 0)
                     targetRot = CGFloat(sin(t * 30)) * 5
                 } else if working {
-                    cell = Anim.work.cell(Int(t / Anim.work.frameTime))
+                    cell = ch.cell(.work, ch.index(.work, at: t - workSince))
                 } else if canSit && extras {
                     cell = perchCell(t)
                 } else if let look = cursorLook(t) {
@@ -913,8 +1014,8 @@ final class Pet {
         }
 
         // Sitting on a window edge: drop the sprite so the seat line (y=149) lands on the edge.
-        let sitting = cell.row == Anim.perch.row
-        if sitting { lift -= Anim.perch.seatRise * scale }
+        let sitting = ch.anim(of: cell) == .perch
+        if sitting { lift -= ch.seatRise * scale }
         if sitting != wasSitting {
             wasSitting = sitting
             if mode == .perched { landSquash = (t, 0.07) }
@@ -944,7 +1045,7 @@ final class Pet {
             dx += pivot * sin(r)
             lift += pivot * (1 - cos(r))
         }
-        headRise = (Character.current.feetY - CGFloat(sprites.top(cell))) * scale + lift
+        headRise = (ch.feetY - CGFloat(sprites.top(cell))) * scale + lift
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -953,32 +1054,31 @@ final class Pet {
         CATransaction.commit()
     }
 
-    /// Sitting needs something to hang her legs over: a window edge, or the top of a visible Dock.
+    /// Sitting needs a window edge to hang her legs over. On the Dock or the bottom of the screen she stands.
     private var canSit: Bool {
         guard mode == .perched, let s = seat else { return false }
-        if !s.isFloor { return true }
-        guard let scr = Desktop.nearestScreen(CGPoint(x: feet.x, y: feet.y + 2)) else { return false }
-        return scr.visibleFrame.minY - scr.frame.minY > Anim.perch.seatRise * scale * 0.6
+        return !s.isFloor
     }
 
     private func idleCell(_ t: Double) -> Cell {
+        if ch.spec(.idle).loop { return ch.cell(.idle, ch.index(.idle, at: t)) }
         let u = t - idleStart
-        if u < idleHold { return Anim.idle.cell(0) }
-        let i = Int((u - idleHold) / Anim.idle.frameTime) + 1
-        if i > 5 { idleStart = t; idleHold = Double.random(in: 1.8...4.2); return Anim.idle.cell(0) }
-        return Anim.idle.cell(i)
+        if u < idleHold { return ch.cell(.idle, 0) }
+        let i = Int((u - idleHold) / ch.frameTime(.idle)) + 1
+        if i >= ch.count(.idle) { idleStart = t; idleHold = Double.random(in: 1.8...4.2); return ch.cell(.idle, 0) }
+        return ch.cell(.idle, i)
     }
 
     /// The seated loop: hold the first frame, then breathe and blink through the rest with the artist's timings.
     private func perchCell(_ t: Double) -> Cell {
         let u = t - idleStart
-        if u < idleHold { return Anim.perch.cell(0) }
-        let d = Anim.perch.durations
+        if u < idleHold { return ch.cell(.perch, 0) }
+        let d = ch.durations(.perch)
         var v = u - idleHold
-        for i in 1..<d.count { v -= d[i]; if v < 0 { return Anim.perch.cell(i) } }
+        for i in 1..<d.count { v -= d[i]; if v < 0 { return ch.cell(.perch, i) } }
         idleStart = t
         idleHold = Double.random(in: 2.0...4.5)
-        return Anim.perch.cell(0)
+        return ch.cell(.perch, 0)
     }
 
     private func cursorLook(_ t: Double) -> Cell? {
@@ -995,7 +1095,7 @@ final class Pet {
 
     /// She dozes off after three quiet minutes (no keyboard or mouse) and wakes on any input.
     private func checkSleep(_ t: Double) {
-        guard sprites.hasExtras else { return }
+        guard ch.hasExtras else { return }
         userIdle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
         let forced = t < forceSleepUntil       // the demo nap wins over work and music
         let calm = mode == .perched && shot == nil && awaiting == nil && (forced || (!working && !music.dancing))
@@ -1014,7 +1114,7 @@ final class Pet {
         forceSleepUntil = 0
         if quiet || mode != .perched { return }
         play(.jump, cells: [1, 0])
-        say(Character.current.wake.randomElement()!, duration: 2.4)
+        say(ch.lines.wake.randomElement()!, duration: 2.4)
     }
 
     /// The real dance frames, two frames per beat, with a hop and a pose closing every 16-beat phrase.
@@ -1036,21 +1136,29 @@ final class Pet {
         let hit = CGFloat(max(0, 1 - ph * 5))                           // squash right on the beat
         var sx: CGFloat = 1 + 0.04 * hit * amp, sy: CGFloat = 1 - 0.06 * hit * amp
         let bar = i % 16
-        if sprites.hasExtras && bar < 12 {
-            // 8 frames across two beats (≈ the artist's 140 ms frames at 116 BPM).
+        if ch.hasExtras && bar < 12 {
+            let spec = ch.spec(.dance)
+            if spec.sub > 1 {
+                // One key pose per beat, held for the first half of the beat, then in-betweens into the next pose.
+                let keys = max(1, spec.count / spec.sub)
+                let key = ((i / 16) * 12 + bar) % keys
+                let s = ph < 0.55 ? 0 : min(spec.sub - 1, 1 + Int((ph - 0.55) / 0.45 * Double(spec.sub - 1)))
+                return (ch.cell(.dance, key * spec.sub + s), swing * 3 * amp, sx, sy, 0, bounce * 3 * k * amp)
+            }
+            // Sampled dance clips: 8 frames across two beats.
             let f = Int(beatPos * 4) % 8
-            return (Anim.dance.cell(f), swing * 3 * amp, sx, sy, 0, bounce * 3 * k * amp)
+            return (ch.cell(.dance, f), swing * 3 * amp, sx, sy, 0, bounce * 3 * k * amp)
         }
         if bar < 14 {
-            if ph < 0.16 { return (Anim.jump.cell(1), 0, 1.05, 0.92, 0, 0) }
+            if ph < 0.16 { return (ch.cell(.jump, 1), 0, 1.05, 0.92, 0, 0) }
             if ph < 0.72 {
                 let u = (ph - 0.16) / 0.56
                 sx = 0.98; sy = 1.03
-                return (Anim.jump.cell(2), CGFloat(i % 2 == 0 ? 4 : -4), sx, sy, 0, CGFloat(sin(u * .pi)) * 15 * k * amp)
+                return (ch.cell(.jump, 2), CGFloat(i % 2 == 0 ? 4 : -4), sx, sy, 0, CGFloat(sin(u * .pi)) * 15 * k * amp)
             }
-            return (Anim.jump.cell(3), 0, sx, sy, 0, 0)
+            return (ch.cell(.jump, 3), 0, sx, sy, 0, 0)
         }
-        if bar == 15 { return (Anim.review.cell(3), 0, sx, sy, 0, bounce * 4 * k) }
+        if bar == 15 { return (ch.cell(.review, 3), 0, sx, sy, 0, bounce * 4 * k) }
         let cell = i % 2 == 0 ? sprites.look(90) : sprites.look(270)
         return (cell, (i % 2 == 0 ? -6 : 6) * amp, sx, sy, 0, bounce * 4 * k * amp)
     }
@@ -1062,17 +1170,17 @@ final class Pet {
         let speed = 120 * scale / 0.62
         var gone: [String] = []
         for c in clones {
-            var cell = Anim.work.cell(Int((t - c.born) / Anim.work.frameTime))
+            var cell = ch.cell(.work, ch.index(.work, at: t - c.born))
             if let l = c.leaving {
                 let u = t - l
-                if u < 0.85 { cell = Anim.review.cell(Int(u / 0.14)) }
-                else if u < 1.4 { cell = Anim.wave.cell(Int(u / 0.12)) }
+                if u < 0.85 { cell = ch.cell(.review, Int(u / 0.14)) }
+                else if u < 1.4 { cell = ch.cell(.wave, Int(u / 0.12)) }
                 else { gone.append(c.id) }
                 c.body.panel.alphaValue = CGFloat(clamp(0.88 * (1.6 - u) / 0.6, 0, 0.88))
             } else if abs(c.target - c.offset) > 1 {
                 let dir: CGFloat = c.target > c.offset ? 1 : -1
                 c.offset += dir * min(abs(c.target - c.offset), speed * dt)
-                cell = (dir > 0 ? Anim.runRight : Anim.runLeft).cell(Int(t / 0.075))
+                cell = ch.cell(dir > 0 ? .runRight : .runLeft, Int(t / 0.075))
             }
             var x = feet.x + c.offset
             if let s = seat { x = clamp(x, s.left + 20, s.right - 20) }
@@ -1106,10 +1214,10 @@ final class Pet {
             "cell": body.cell.map { [$0.row, $0.col] } ?? [],
             "rotation": Double(rot),
             "asleep": asleep,
-            "character": Character.current.id,
+            "character": ch.id,
             "dockLift": Double(dockLift),
             "chasing": chasing,
-            "sitting": body.cell?.row == Anim.perch.row,
+            "sitting": body.cell.map { ch.anim(of: $0) == .perch } ?? false,
             "level": body.panel.level.rawValue,
             "windowNumber": body.panel.windowNumber,
             "frame": [Double(body.panel.frame.minX), Double(body.panel.frame.minY), Double(body.panel.frame.width), Double(body.panel.frame.height)],

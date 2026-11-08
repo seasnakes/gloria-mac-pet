@@ -1,0 +1,120 @@
+{
+ "id": "gloria",
+ "name": "GLORIA",
+ "source": "approved 柔彩 Q sheet (base-v3.png) + smoothed loops from tools/gloria_sheet.py",
+ "sheet": "gloria.png",
+ "cell": [
+  192,
+  208
+ ],
+ "feetY": 202,
+ "seatY": 149,
+ "grab": [
+  96,
+  72
+ ],
+ "scale": 1.0,
+ "anims": {
+  "idle": {
+   "row": 0,
+   "count": 6,
+   "frameMs": 120
+  },
+  "runRight": {
+   "row": 1,
+   "count": 8,
+   "frameMs": 75
+  },
+  "runLeft": {
+   "row": 2,
+   "count": 8,
+   "frameMs": 75
+  },
+  "wave": {
+   "row": 3,
+   "count": 4,
+   "frameMs": 140
+  },
+  "jump": {
+   "row": 4,
+   "count": 5,
+   "frameMs": 100
+  },
+  "failed": {
+   "row": 5,
+   "count": 8,
+   "frameMs": 130
+  },
+  "waiting": {
+   "row": 6,
+   "count": 6,
+   "frameMs": 200
+  },
+  "work": {
+   "row": 15,
+   "count": 19,
+   "frameMs": [
+    1100,
+    70,
+    70,
+    800,
+    130,
+    500,
+    70,
+    70,
+    600,
+    70,
+    70,
+    900,
+    80,
+    80,
+    900,
+    70,
+    70,
+    700,
+    70
+   ],
+   "loop": true
+  },
+  "review": {
+   "row": 8,
+   "count": 6,
+   "frameMs": 170
+  },
+  "perch": {
+   "row": 11,
+   "count": 6,
+   "frameMs": [
+    220,
+    180,
+    90,
+    110,
+    90,
+    260
+   ]
+  },
+  "dance": {
+   "row": 18,
+   "count": 32,
+   "frameMs": 130,
+   "sub": 4
+  },
+  "sleep": {
+   "row": 13,
+   "count": 6,
+   "frameMs": [
+    260,
+    220,
+    260,
+    520,
+    260,
+    220
+   ]
+  },
+  "dangle": {
+   "row": 14,
+   "count": 4,
+   "frameMs": 120
+  }
+ }
+}

@@ -328,15 +328,19 @@ enum HookInstaller {
 
 /// Turns hook events into what she does and says.
 final class HuskBrain {
-    weak var pet: Pet?
+    /// The pet standing in for an agent ("claude"/"codex"), and every pet on screen.
+    var petFor: (String) -> Pet? = { _ in nil }
+    var pets: () -> [Pet] = { [] }
     struct Session { var source: String; var busy = false; var awaiting: String?; var lastTool = ""; var lastAt = now() }
     private(set) var sessions: [String: Session] = [:]
+    /// One agent waiting on another (Claude running `codex exec`, …), keyed by the caller's tool call.
+    struct Link { let from: String; let to: String; let task: String; let at: Double }
+    private var links: [String: Link] = [:]
     private var lastFailSay: Double = 0
-    private var lastCaption: Double = 0
+    private var lastCaption: [String: Double] = [:]
     private(set) var events = 0
 
-    init(pet: Pet) {
-        self.pet = pet
+    init() {
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.expire() }
     }
 
@@ -344,9 +348,10 @@ final class HuskBrain {
     private func tag(_ src: String) -> String { src == "codex" ? "CODEX" : "CLAUDE CODE" }
 
     func handle(_ e: [String: Any]) {
-        guard let pet, let name = e["hook_event_name"] as? String else { return }
+        guard let name = e["hook_event_name"] as? String else { return }
         events += 1
         let src = e["_source"] as? String ?? "claude"
+        guard let pet = petFor(src) else { return }
         let sid = e["session_id"] as? String ?? "default"
         var s = sessions[sid] ?? Session(source: src)
         s.lastAt = now()
@@ -357,7 +362,10 @@ final class HuskBrain {
         switch name {
         case "SessionStart":
             let why = e["source"] as? String ?? "startup"
-            if why == "startup" || why == "resume" {
+            if let l = links.values.first(where: { $0.to == src && now() - $0.at < 90 }) {
+                pet.play(.wave)
+                pet.say("接到 \(who(l.from)) 的委托，开工～", tag: tg, duration: 3)
+            } else if why == "startup" || why == "resume" {
                 pet.play(.wave, loops: 2)
                 pet.say(why == "resume" ? "\(w) 回来了，继续干活～" : "\(w) 上线啦，我来陪你写代码～", tag: tg, duration: 3.5)
             }
@@ -370,16 +378,20 @@ final class HuskBrain {
         case "PreToolUse":
             s.busy = true
             s.lastTool = describe(tool, input)
-            if tool != "Task" && tool != "Agent" && now() - lastCaption > 0.6 {
-                lastCaption = now()
+            if let to = AgentCalls.callee(from: src, tool: tool, input: input) {
+                link(from: src, to: to, id: e["tool_use_id"] as? String ?? "\(sid):\(now())", task: AgentCalls.task(input))
+            } else if tool != "Task" && tool != "Agent" && now() - (lastCaption[src] ?? 0) > 0.6 {
+                lastCaption[src] = now()
                 pet.say(s.lastTool, kind: .caption, duration: 2.6)
             }
         case "PostToolUse":
             s.awaiting = nil
-            if let err = e["error"], !(err is NSNull), "\(err)".count > 0 { failed(pet, w, tg, tool) }
+            let bad = e["error"].map { !($0 is NSNull) && "\($0)".count > 0 } ?? false
+            if !unlink(src, e["tool_use_id"] as? String, failed: bad) && bad { failed(pet, w, tg, tool) }
         case "PostToolUseFailure":
             s.awaiting = nil
-            if (e["is_interrupt"] as? Bool) != true { failed(pet, w, tg, tool) }
+            let interrupted = (e["is_interrupt"] as? Bool) == true
+            if !unlink(src, e["tool_use_id"] as? String, failed: !interrupted) && !interrupted { failed(pet, w, tg, tool) }
         case "Notification":
             let type = e["notification_type"] as? String ?? ""
             let msg = e["message"] as? String ?? ""
@@ -428,6 +440,7 @@ final class HuskBrain {
             s.awaiting = nil
             pet.retireClone(nil)
             sessions.removeValue(forKey: sid)
+            links = links.filter { $0.value.from != src || now() - $0.value.at < 5 }
             refresh()
             if (e["reason"] as? String) != "clear" { pet.play(.wave, loops: 2); pet.say("\(w) 下线了，拜拜～", tag: tg, duration: 3) }
             return
@@ -435,6 +448,36 @@ final class HuskBrain {
         }
         sessions[sid] = s
         refresh()
+    }
+
+    // MARK: Agents calling agents
+
+    private func link(from: String, to: String, id: String, task: String) {
+        links[id] = Link(from: from, to: to, task: task, at: now())
+        // The callee looks busy for as long as the caller waits on it, even if its own hooks aren't installed.
+        sessions["link:\(id)"] = Session(source: to, busy: true)
+        let ask = task.isEmpty ? "\(who(to))，这个交给你啦～" : "\(who(to))，帮我：「\(task)」"
+        guard let a = petFor(from), let b = petFor(to), a !== b else {
+            petFor(from)?.say("请 \(who(to)) 帮忙\(task.isEmpty ? "" : "：「\(task)」")", kind: .caption, duration: 3)
+            return
+        }
+        a.passNote(to: b, say: ask, tag: tag(from), note: "收到 \(who(from)) 的委托！", noteTag: tag(to))
+    }
+
+    /// The caller's tool call came back: the callee hands the result over. Returns false when it wasn't a link.
+    @discardableResult
+    private func unlink(_ src: String, _ id: String?, failed: Bool) -> Bool {
+        // Match by the tool call's id; only an event without one falls back to this agent's latest call.
+        let key = id.map { links[$0] != nil ? $0 : nil }
+            ?? links.filter { $0.value.from == src }.max { $0.value.at < $1.value.at }?.key
+        guard let key, let l = links.removeValue(forKey: key) else { return false }
+        sessions.removeValue(forKey: "link:\(key)")
+        refresh()
+        guard let a = petFor(l.from), let b = petFor(l.to), a !== b else { return true }
+        b.passNote(to: a, say: failed ? "这个没搞定……" : "做好啦，交给你～", tag: tag(l.to),
+                   note: failed ? "没关系，我来想办法。" : "收到 \(who(l.to)) 的结果，谢啦！", noteTag: tag(l.from))
+        if failed { b.play(.failed) }
+        return true
     }
 
     private func failed(_ pet: Pet, _ w: String, _ tg: String, _ tool: String) {
@@ -446,21 +489,24 @@ final class HuskBrain {
     }
 
     func resync() { refresh() }
-    func clear() { sessions.removeAll(); refresh() }
+    func clear() { sessions.removeAll(); links.removeAll(); refresh() }
 
     private func refresh() {
-        guard let pet else { return }
-        pet.working = sessions.values.contains { $0.busy }
-        let wait = sessions.values.first { $0.awaiting != nil }
-        let was = pet.awaiting
-        pet.awaiting = wait?.awaiting
-        pet.awaitingTag = wait.map { tag($0.source) } ?? "CLAUDE CODE"
-        if was != nil && pet.awaiting == nil && pet.bubble.sticky { pet.bubble.unstick() }
+        for pet in pets() {
+            let mine = sessions.values.filter { petFor($0.source) === pet }
+            pet.working = mine.contains { $0.busy }
+            let wait = mine.first { $0.awaiting != nil }
+            let was = pet.awaiting
+            pet.awaiting = wait?.awaiting
+            pet.awaitingTag = wait.map { tag($0.source) } ?? "CLAUDE CODE"
+            if was != nil && pet.awaiting == nil && pet.bubble.sticky { pet.bubble.unstick() }
+        }
     }
 
     private func expire() {
         let t = now()
         for (k, s) in sessions where t - s.lastAt > 20 * 60 { sessions.removeValue(forKey: k) }
+        for (k, l) in links where t - l.at > 30 * 60 { links.removeValue(forKey: k); sessions.removeValue(forKey: "link:\(k)") }
         refresh()
     }
 
@@ -510,6 +556,23 @@ final class HuskBrain {
         let busy = sessions.values.filter { $0.busy }
         if let b = busy.first { return "\(who(b.source)) 工作中" + (busy.count > 1 ? " ×\(busy.count)" : "") }
         return sessions.isEmpty ? "空闲" : "待命"
+    }
+
+    /// Claude hands a job to Codex and gets the answer back, so you can see the two pets talk.
+    func demoTogether() {
+        let steps: [(Double, [String: Any])] = [
+            (0.0, ["hook_event_name": "UserPromptSubmit", "prompt": "让 Codex 帮忙画一张角色设定图", "_source": "claude", "session_id": "demo-c"]),
+            (2.2, ["hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": "demo-call",
+                   "tool_input": ["command": "codex exec --skip-git-repo-check \"画一张 Doro 抱着欧润吉的设定图\""], "_source": "claude", "session_id": "demo-c"]),
+            (4.4, ["hook_event_name": "SessionStart", "source": "startup", "_source": "codex", "session_id": "codex:demo-x"]),
+            (5.6, ["hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": ["command": "python3 draw.py --doro"], "_source": "codex", "session_id": "codex:demo-x"]),
+            (8.6, ["hook_event_name": "Stop", "last_assistant_message": "设定图画好了。", "_source": "codex", "session_id": "codex:demo-x"]),
+            (9.4, ["hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_use_id": "demo-call", "_source": "claude", "session_id": "demo-c"]),
+            (13.5, ["hook_event_name": "Stop", "last_assistant_message": "Codex 画好了设定图，我放进项目里了。", "_source": "claude", "session_id": "demo-c"]),
+        ]
+        for (at, ev) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in self?.handle(ev) }
+        }
     }
 
     /// A scripted run so you can see every reaction without a real session.

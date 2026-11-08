@@ -3,19 +3,18 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP="$ROOT/GLORIA.app"
-VERSION="0.3.3"
+VERSION="0.4.0"
 ARCH="$(uname -m)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$ROOT/Resources/spritesheet.png" "$APP/Contents/Resources/"
-# Other characters: sheets and anchors built by characters/doro and characters/usagi
-cp "$ROOT"/characters/doro/doro.{png,json} "$ROOT"/characters/usagi/usagi.{png,json} "$APP/Contents/Resources/"
+# Character sheets and anchors: characters/gloria (tools/gloria_sheet.py), characters/doro, characters/usagi
+cp "$ROOT"/characters/gloria/gloria.{png,json} "$ROOT"/characters/doro/doro.{png,json} "$ROOT"/characters/usagi/usagi.{png,json} "$APP/Contents/Resources/"
 
 # Menu bar / Finder icon from the neutral frame's head.
 ICONSET="$(mktemp -d)/GLORIA.iconset"
 mkdir -p "$ICONSET"
-python3 - "$ROOT/Resources/spritesheet.png" "$ICONSET" <<'PY' || true
+python3 - "$ROOT/characters/gloria/base-v3.png" "$ICONSET" <<'PY' || true
 import sys
 from PIL import Image
 sheet, out = sys.argv[1], sys.argv[2]

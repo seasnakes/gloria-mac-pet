@@ -2,11 +2,13 @@ import AppKit
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    var pet: Pet!
+    var pets: [Pet] = []
     var music = MusicWatch()
-    var brain: HuskBrain!
+    let brain = HuskBrain()
     let server = HuskServer()
     var status: NSStatusItem!
+    /// The pet whose menu is open (right-click on her); nil for the menu bar icon, which speaks for everyone.
+    private weak var menuPet: Pet?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         // One GLORIA at a time (e.g. the copy in Applications and the one in the project folder).
@@ -16,31 +18,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.terminate(nil)
             return
         }
-        guard let ch = Character.load(Prefs.character) ?? Character.load("gloria") else {
+        brain.petFor = { [weak self] src in self?.petFor(src) }
+        brain.pets = { [weak self] in self?.pets ?? [] }
+        for (i, id) in Prefs.shown.enumerated() { addPet(id, slot: i) }
+        if pets.isEmpty { addPet("gloria", slot: 0) }
+        guard !pets.isEmpty else {
             let a = NSAlert()
             a.messageText = "找不到 GLORIA 的精灵图"
             a.runModal()
             NSApp.terminate(nil)
             return
         }
-        Character.current = ch
-        pet = Pet(sprites: ch.sprites, music: music)
-        brain = HuskBrain(pet: pet)
-        wire(pet)
 
         server.onEvent = { [weak self] e in self?.brain.handle(e) }
         server.onControl = { [weak self] m in self?.control(m) ?? [:] }
         server.start()
 
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        status.button?.image = ch.icon(size: 18)
         status.button?.imagePosition = .imageOnly
-        status.button?.toolTip = "GLORIA"
+        status.button?.toolTip = "GLORIA 桌宠"
         let menu = NSMenu()
         menu.delegate = self
         status.menu = menu
+        afterRoster()
 
-        pet.start()
         let poll = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.music.poll() }
         RunLoop.main.add(poll, forMode: .common)
 
@@ -50,28 +51,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func wire(_ p: Pet) {
-        p.onMenu = { [weak self] e, v in
+    // MARK: Pets on screen
+
+    @discardableResult
+    func addPet(_ id: String, slot: Int, at: CGPoint? = nil) -> Pet? {
+        guard !pets.contains(where: { $0.ch.id == id }), let ch = Character.load(id) else { return nil }
+        let p = Pet(ch: ch, music: music)
+        p.peers = { [weak self] in self?.pets ?? [] }
+        p.onMenu = { [weak self, weak p] e, v in
             guard let self else { return }
-            NSMenu.popUpContextMenu(self.buildMenu(), with: e, for: v)
+            self.menuPet = p
+            NSMenu.popUpContextMenu(self.buildMenu(for: p), with: e, for: v)
+        }
+        pets.append(p)
+        p.start(at: at, slot: slot)
+        return p
+    }
+
+    /// The pet standing in for an agent: the one picked in the menu, else the first on screen.
+    func petFor(_ src: String) -> Pet? {
+        let id = Prefs.role(src)
+        return pets.first { $0.ch.id == id } ?? pets.first
+    }
+
+    func setShown(_ id: String, _ on: Bool) {
+        if on {
+            guard !pets.contains(where: { $0.ch.id == id }) else { return }
+            guard addPet(id, slot: pets.count) != nil else { pets.first?.say("找不到 \(Character.title(id)) 的精灵图。", duration: 3); return }
+        } else {
+            guard pets.count > 1, let p = pets.first(where: { $0.ch.id == id }) else { return }
+            p.teardown()
+            pets.removeAll { $0 === p }
+        }
+        Prefs.shown = pets.map { $0.ch.id }
+        afterRoster()
+    }
+
+    /// Swap one pet for another character in the same spot.
+    func replace(_ old: Pet, with id: String) {
+        guard old.ch.id != id else { return }
+        if pets.contains(where: { $0.ch.id == id }) { setShown(old.ch.id, false); return }
+        guard let ch = Character.load(id) else { old.say("找不到 \(Character.title(id)) 的精灵图。", duration: 3); return }
+        let at = old.feet
+        let i = pets.firstIndex { $0 === old } ?? 0
+        for src in ["claude", "codex"] where Prefs.role(src) == old.ch.id { Prefs.setRole(src, id) }
+        old.teardown()
+        let p = Pet(ch: ch, music: music)
+        p.peers = { [weak self] in self?.pets ?? [] }
+        p.onMenu = { [weak self, weak p] e, v in
+            guard let self else { return }
+            self.menuPet = p
+            NSMenu.popUpContextMenu(self.buildMenu(for: p), with: e, for: v)
+        }
+        pets[i] = p
+        p.start(at: at)
+        Prefs.shown = pets.map { $0.ch.id }
+        afterRoster()
+    }
+
+    func setRole(_ src: String, _ id: String) {
+        if !pets.contains(where: { $0.ch.id == id }) { setShown(id, true) }
+        Prefs.setRole(src, id)
+        brain.clear()
+        afterRoster()
+        if let p = petFor(src), (src == "claude" ? Prefs.huskClaude : Prefs.huskCodex) {
+            p.play(.wave)
+            p.say("我来当 \(src == "codex" ? "Codex" : "Claude Code") 的化身！", tag: src == "codex" ? "CODEX" : "CLAUDE CODE", duration: 3)
         }
     }
 
-    /// One character on screen at a time: the new one drops in where the old one was.
-    func switchCharacter(_ id: String) {
-        guard id != Character.current.id else { return }
-        guard let ch = Character.load(id) else { pet.say("找不到 \(Character.title(id)) 的精灵图。", duration: 3); return }
-        let at = pet.feet
-        pet.teardown()
-        Character.current = ch
-        Prefs.character = id
-        let p = Pet(sprites: ch.sprites, music: music)
-        pet = p
-        wire(p)
-        brain.pet = p
+    private func afterRoster() {
         brain.resync()
-        status.button?.image = ch.icon(size: 18)
-        p.start(at: at)
+        for p in pets { p.roles = [] }
+        if Prefs.huskClaude { petFor("claude")?.roles.append("Claude Code") }
+        if Prefs.huskCodex { petFor("codex")?.roles.append("Codex") }
+        status?.button?.image = rosterIcon()
+    }
+
+    /// Everyone's face side by side for the menu bar.
+    private func rosterIcon() -> NSImage? {
+        let faces = pets.compactMap { $0.ch.icon(size: 18) }
+        guard !faces.isEmpty else { return nil }
+        if faces.count == 1 { return faces[0] }
+        let overlap: CGFloat = 4
+        let w = faces.reduce(0) { $0 + $1.size.width } - overlap * CGFloat(faces.count - 1)
+        return NSImage(size: NSSize(width: w, height: 18), flipped: false) { _ in
+            var x: CGFloat = 0
+            for f in faces { f.draw(in: NSRect(x: x, y: 0, width: f.size.width, height: 18)); x += f.size.width - overlap }
+            return true
+        }
     }
 
     func applicationWillTerminate(_ n: Notification) {
@@ -83,8 +151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        menuPet = nil
         menu.removeAllItems()
-        for i in buildMenu().items { i.menu?.removeItem(i); menu.addItem(i) }
+        for i in buildMenu(for: nil).items { i.menu?.removeItem(i); menu.addItem(i) }
     }
 
     private func item(_ title: String, _ sel: Selector?, on: Bool? = nil, key: String = "", tag: Int = 0) -> NSMenuItem {
@@ -96,20 +165,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return m
     }
 
-    func buildMenu() -> NSMenu {
+    private func where_(_ p: Pet) -> String {
+        let s = p.status()
+        switch s["mode"] as? String {
+        case "perched", "walking": return (s["seatOwner"] as? String) == "floor" ? "站在屏幕底部" : "站在「\(s["seatOwner"] as? String ?? "")」的窗口上"
+        case "held": return "被你拎着"
+        default: return "在空中"
+        }
+    }
+
+    func buildMenu(for pet: Pet?) -> NSMenu {
         let m = NSMenu()
         m.autoenablesItems = false
-        let head = item(Character.title(Character.current.id), nil)
-        head.attributedTitle = NSAttributedString(string: Character.title(Character.current.id), attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .bold)])
-        m.addItem(head)
-        let s = pet.status()
-        let place: String
-        switch s["mode"] as? String {
-        case "perched", "walking": place = (s["seatOwner"] as? String) == "floor" ? "站在屏幕底部" : "站在「\(s["seatOwner"] as? String ?? "")」的窗口上"
-        case "held": place = "被你拎着"
-        default: place = "在空中"
+        for p in pet.map({ [$0] }) ?? pets {
+            let title = Character.title(p.ch.id) + (p.roles.isEmpty ? "" : " · \(p.roles.joined(separator: " / ")) 化身")
+            let head = item(title, nil)
+            head.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .bold)])
+            m.addItem(head)
+            m.addItem(item("  \(where_(p))", nil))
         }
-        m.addItem(item("  \(place)", nil))
         let musicLine: String
         if music.dancing { musicLine = "  ♪ 跳舞中" + (music.playerName.isEmpty ? "" : " · \(music.playerName)") + (music.tapLive ? " · \(music.tapNote)" : "") }
         else if music.active { musicLine = "  ♪ \(music.playerName) 有声音（不是音乐 App，等节拍稳定）" }
@@ -118,14 +192,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if Prefs.huskClaude || Prefs.huskCodex { m.addItem(item("  ⌘ 化身：\(brain.summary)", nil)) }
         m.addItem(.separator())
 
-        let who = NSMenuItem(title: "角色", action: nil, keyEquivalent: "")
+        // Who's on screen.
+        let who = NSMenuItem(title: "角色（可以同时放几个）", action: nil, keyEquivalent: "")
         let wm = NSMenu()
         for (i, id) in Character.ids.enumerated() {
-            wm.addItem(item(Character.title(id), #selector(pickCharacter(_:)), on: Character.current.id == id, tag: i))
+            let shown = pets.contains { $0.ch.id == id }
+            let it = item(Character.title(id), #selector(toggleShown(_:)), on: shown, tag: i)
+            if shown && pets.count == 1 { it.isEnabled = false }
+            wm.addItem(it)
         }
         who.submenu = wm
         m.addItem(who)
-        m.addItem(item("叫她过来", #selector(summon)))
+
+        // Agents and the pets standing in for them.
+        for (si, src) in ["claude", "codex"].enumerated() {
+            let name = src == "claude" ? "Claude Code" : "Codex"
+            let on = src == "claude" ? Prefs.huskClaude : Prefs.huskCodex
+            let it = NSMenuItem(title: "\(name) 化身" + (on ? "：\(petFor(src).map { Character.title($0.ch.id) } ?? "")" : "（未接入）"), action: nil, keyEquivalent: "")
+            let sm = NSMenu()
+            sm.addItem(item("接入 \(name)（装钩子）", src == "claude" ? #selector(toggleClaude) : #selector(toggleCodex), on: on))
+            sm.addItem(.separator())
+            sm.addItem(item("由谁来当：", nil))
+            for (ci, id) in Character.ids.enumerated() {
+                sm.addItem(item("  " + Character.title(id), #selector(pickRole(_:)), on: petFor(src)?.ch.id == id, tag: si * 10 + ci))
+            }
+            it.submenu = sm
+            m.addItem(it)
+        }
+        m.addItem(item("需要批准时提示音", #selector(toggleChime), on: Prefs.chime))
+        m.addItem(.separator())
+
+        m.addItem(item(pet == nil && pets.count > 1 ? "叫她们过来" : "叫她过来", #selector(summon)))
+        if let pet, pets.count > 1 { m.addItem(item("让 \(pet.ch.name) 先休息（隐藏）", #selector(hideThis))) }
         let size = NSMenuItem(title: "大小", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for (i, (name, v)) in [("小", 0.5), ("中", 0.62), ("大", 0.8), ("特大", 1.0)].enumerated() {
@@ -144,15 +242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         m.addItem(item("浏览器里的音乐也跳", #selector(toggleBrowser), on: Prefs.browserMusic))
         m.addItem(.separator())
 
-        m.addItem(item("Claude Code 化身", #selector(toggleClaude), on: Prefs.huskClaude))
-        m.addItem(item("Codex 化身", #selector(toggleCodex), on: Prefs.huskCodex))
-        m.addItem(item("需要批准时提示音", #selector(toggleChime), on: Prefs.chime))
-        m.addItem(.separator())
-
         let demo = NSMenuItem(title: "演示", action: nil, keyEquivalent: "")
         let dm = NSMenu()
         dm.addItem(item("跳舞 16 秒", #selector(demoDance)))
         dm.addItem(item("Claude Code 一轮工作", #selector(demoHusk)))
+        dm.addItem(item("Claude 请 Codex 帮忙（两个化身传话）", #selector(demoTogether)))
         dm.addItem(item("被扔出去", #selector(demoThrow)))
         dm.addItem(item("被拎起来晃一晃", #selector(demoHold)))
         dm.addItem(item("打个盹 10 秒", #selector(demoNap)))
@@ -163,8 +257,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return m
     }
 
-    @objc func summon() { pet.summon(entrance: false) }
-    @objc func setSize(_ sender: NSMenuItem) { pet.setScale(CGFloat([0.5, 0.62, 0.8, 1.0][sender.tag])) }
+    /// The pet a menu action is about: the one right-clicked, else the first.
+    private var focus: Pet { menuPet ?? pets[0] }
+
+    @objc func summon() {
+        if let p = menuPet { p.summon(entrance: false); return }
+        for (i, p) in pets.enumerated() { p.summon(entrance: false, slot: i) }
+    }
+    @objc func hideThis() { if let p = menuPet { setShown(p.ch.id, false) } }
+    @objc func toggleShown(_ sender: NSMenuItem) {
+        let id = Character.ids[sender.tag]
+        setShown(id, !pets.contains { $0.ch.id == id })
+    }
+    @objc func pickRole(_ sender: NSMenuItem) { setRole(["claude", "codex"][sender.tag / 10], Character.ids[sender.tag % 10]) }
+    @objc func setSize(_ sender: NSMenuItem) { for p in pets { p.setScale(CGFloat([0.5, 0.62, 0.8, 1.0][sender.tag])) } }
     @objc func toggleWander() { Prefs.wander.toggle() }
     @objc func toggleNap() { Prefs.nap.toggle() }
     @objc func toggleChase() { Prefs.chase.toggle() }
@@ -175,36 +281,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func setLogin(_ on: Bool) -> String {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-            pet.say(on ? "好～以后登录 Mac 我就自己出来。" : "以后登录时我就不自己出来啦。", duration: 3)
+            focus.say(on ? "好～以后登录 Mac 我就自己出来。" : "以后登录时我就不自己出来啦。", duration: 3)
             return "ok"
         } catch {
-            pet.say("没设置成功：\(error.localizedDescription)", duration: 5)
+            focus.say("没设置成功：\(error.localizedDescription)", duration: 5)
             return error.localizedDescription
         }
     }
-    @objc func pickCharacter(_ sender: NSMenuItem) { switchCharacter(Character.ids[sender.tag]) }
     @objc func toggleDance() { Prefs.dance.toggle() }
     @objc func toggleTap() { Prefs.beatTap.toggle(); if !Prefs.beatTap { music.stopTap() } }
     @objc func toggleBrowser() { Prefs.browserMusic.toggle() }
     @objc func toggleChime() { Prefs.chime.toggle() }
     @objc func toggleClaude() { setHusk("claude", !Prefs.huskClaude) }
     @objc func toggleCodex() { setHusk("codex", !Prefs.huskCodex) }
-    @objc func demoDance() { pet.forceDance(16) }
+    @objc func demoDance() { pets[0].forceDance(16) }
     @objc func demoHusk() { brain.demo() }
-    @objc func demoThrow() { pet.throwHer(vx: CGFloat.random(in: -1400...1400), vy: 1500) }
-    @objc func demoHold() { pet.simulateHold(3) }
-    @objc func demoNap() { pet.forceSleepUntil = now() + 10 }
+    @objc func demoTogether() {
+        if Set(["claude", "codex"].compactMap { petFor($0).map { ObjectIdentifier($0) } }).count < 2 {
+            focus.say("先在「Claude Code 化身」和「Codex 化身」里各选一个不同的角色，她们才能互相传话。", duration: 5)
+            return
+        }
+        brain.demoTogether()
+    }
+    @objc func demoThrow() { focus.throwHer(vx: CGFloat.random(in: -1400...1400), vy: 1500) }
+    @objc func demoHold() { focus.simulateHold(3) }
+    @objc func demoNap() { focus.forceSleepUntil = now() + 10 }
     @objc func quit() { NSApp.terminate(nil) }
 
     private func setHusk(_ src: String, _ on: Bool) {
+        let p = petFor(src) ?? focus
         do {
             try HookInstaller.set(src, on: on)
             if src == "claude" { Prefs.huskClaude = on } else { Prefs.huskCodex = on }
+            afterRoster()
             let app = src == "claude" ? "Claude Code" : "Codex"
-            pet.say(on ? "好了！重启 \(app) 后，我就是它的分身啦。\(src == "codex" ? "Codex 会问要不要信任这些钩子，选信任。" : "")" : "已经从 \(app) 里拿掉我的钩子。",
-                    tag: src == "claude" ? "CLAUDE CODE" : "CODEX", duration: 6)
+            p.say(on ? "好了！重启 \(app) 后，我就是它的分身啦。\(src == "codex" ? "Codex 会问要不要信任这些钩子，选信任。" : "")" : "已经从 \(app) 里拿掉我的钩子。",
+                  tag: src == "claude" ? "CLAUDE CODE" : "CODEX", duration: 6)
         } catch {
-            pet.say("没设置成功：\(error)", duration: 6)
+            p.say("没设置成功：\(error)", duration: 6)
         }
     }
 
@@ -213,18 +327,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func control(_ m: [String: Any]) -> [String: Any] {
         let cmd = m["ctl"] as? String ?? "status"
         func num(_ k: String, _ d: Double) -> Double { (m[k] as? NSNumber)?.doubleValue ?? d }
+        // Commands about one pet take "pet": "<character id>"; the default is the first on screen.
+        let pet = (m["pet"] as? String).flatMap { id in pets.first { $0.ch.id == id } } ?? pets[0]
         switch cmd {
         case "dance": pet.forceDance(num("seconds", 12))
         case "stopdance": music.forcedUntil = 0
         case "say": pet.say(m["text"] as? String ?? "", tag: m["tag"] as? String, duration: num("seconds", 4))
-        case "summon": pet.summon(entrance: false)
+        case "summon": if m["pet"] == nil { for (i, p) in pets.enumerated() { p.summon(entrance: false, slot: i) } } else { pet.summon(entrance: false) }
         case "throw": pet.throwHer(vx: CGFloat(num("vx", 900)), vy: CGFloat(num("vy", 1200)))
         case "place": pet.place(x: CGFloat(num("x", 500)), y: CGFloat(num("y", 600)))
-        case "scale": pet.setScale(CGFloat(num("value", 0.62)))
+        case "scale": for p in pets { p.setScale(CGFloat(num("value", 0.62))) }
         case "demo": brain.demo()
+        case "together": brain.demoTogether()
         case "hold": pet.simulateHold(num("seconds", 3))
-        case "character": switchCharacter(m["id"] as? String ?? "gloria")
-        case "launch": pet.debugDockBounce()
+        case "character": replace(pet, with: m["id"] as? String ?? "gloria")
+        case "show": setShown(m["id"] as? String ?? "", (m["on"] as? Bool) ?? true)
+        case "role": setRole(m["source"] as? String ?? "claude", m["id"] as? String ?? pet.ch.id)
+        case "launch": for p in pets { p.debugDockBounce() }
         case "huskreset": brain.clear()
         case "quit":
             UserDefaults.standard.synchronize()
@@ -232,11 +351,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "login":
             let r = setLogin((m["on"] as? Bool) ?? true)
             return ["result": r, "status": SMAppService.mainApp.status.rawValue, "path": Bundle.main.bundlePath]
-        case "pointer": pet.fakePointer = (CGPoint(x: num("x", 0), y: num("y", 0)), now() + num("seconds", 3))
+        case "pointer": for p in pets { p.fakePointer = (CGPoint(x: num("x", 0), y: num("y", 0)), now() + num("seconds", 3)) }
         case "play":
-            let names: [String: Anim] = ["idle": .idle, "wave": .wave, "jump": .jump, "failed": .failed, "waiting": .waiting, "work": .work,
-                                         "review": .review, "perch": .perch, "dance": .dance, "sleep": .sleep, "dangle": .dangle]
-            if let a = names[m["anim"] as? String ?? ""] { pet.play(a, loops: Int(num("loops", 2))) }
+            if let a = Anim(rawValue: m["anim"] as? String ?? "") { pet.play(a, loops: Int(num("loops", 2))) }
         case "sleep": pet.forceSleepUntil = now() + num("seconds", 10)
         case "desk":
             let r = Desktop.scan(excluding: getpid())
@@ -250,6 +367,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let src = m["source"] as? String ?? "claude"
             return ["installed": HookInstaller.installed(src), "ours": HookInstaller.anyOurs(src), "file": HookInstaller.file(src).path,
                     "command": HookInstaller.command(src), "events": brain.events, "summary": brain.summary]
+        case "menu":
+            func titles(_ m: NSMenu, _ d: Int) -> [String] {
+                m.items.flatMap { i -> [String] in
+                    let mark = i.state == .on ? "✓ " : ""
+                    let line = i.isSeparatorItem ? "—" : String(repeating: "  ", count: d) + mark + i.title
+                    return [line] + (i.submenu.map { titles($0, d + 1) } ?? [])
+                }
+            }
+            return ["items": titles(buildMenu(for: m["pet"] == nil ? nil : pet), 0)]
         case "scene":
             if let path = m["path"] as? String { scene(path: path, scale: CGFloat(num("scale", 0.5))) }
         default: break
@@ -257,10 +383,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var s = pet.status()
         s["husk"] = brain.summary
         s["huskEvents"] = brain.events
+        s["pets"] = pets.map { p -> [String: Any] in
+            var d = p.status()
+            d["roles"] = p.roles
+            return d
+        }
+        s["roles"] = ["claude": petFor("claude")?.ch.id ?? "", "codex": petFor("codex")?.ch.id ?? ""]
         return s
     }
 
-    /// A schematic of the main screen for checks: window outlines (geometry only), her real rendering and her bubble.
+    /// A schematic of the main screen for checks: window outlines (geometry only), every pet, bubble and envelope.
     private func scene(path: String, scale k: CGFloat) {
         guard let scr = NSScreen.screens.first else { return }
         let f = scr.frame
@@ -295,14 +427,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             layer.render(in: ctx)
             ctx.restoreGState()
         }
-        put(pet.body.panel, pet.body.view.layer)
-        if pet.bubble.visible, let rep = pet.bubble.view.bitmapImageRepForCachingDisplay(in: pet.bubble.view.bounds) {
-            pet.bubble.view.cacheDisplay(in: pet.bubble.view.bounds, to: rep)
-            if let img = rep.cgImage {
-                let b = pet.bubble.panel.frame
-                ctx.draw(img, in: CGRect(x: (b.minX - f.minX) * k, y: (b.minY - f.minY) * k, width: b.width * k, height: b.height * k))
+        for p in pets {
+            put(p.body.panel, p.body.view.layer)
+            if p.bubble.visible, let rep = p.bubble.view.bitmapImageRepForCachingDisplay(in: p.bubble.view.bounds) {
+                p.bubble.view.cacheDisplay(in: p.bubble.view.bounds, to: rep)
+                if let img = rep.cgImage {
+                    let b = p.bubble.panel.frame
+                    ctx.draw(img, in: CGRect(x: (b.minX - f.minX) * k, y: (b.minY - f.minY) * k, width: b.width * k, height: b.height * k))
+                }
             }
         }
+        for c in Courier.inFlight { put(c.panel, c.layer) }
         guard let img = ctx.makeImage() else { return }
         let rep = NSBitmapImageRep(cgImage: img)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))

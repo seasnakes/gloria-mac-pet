@@ -26,11 +26,12 @@ from src.core.standing_doro import StandingDoro
 fmt = QSurfaceFormat(); fmt.setAlphaBufferSize(8); QSurfaceFormat.setDefaultFormat(fmt)
 app = QApplication(sys.argv)
 
-CW, CH, COLS, ROWS = 192, 208, 8, 15
+CW, CH, COLS, ROWS = 192, 208, 8, 22
 FEET_CANVAS = (295, 485)            # StandingDoro's body centre / feet line in its 600-unit canvas
 TARGET_H = 172                      # standing height in the cell, px
 
-NEUTRAL = {**{f"ParamExp{i}": 0 for i in range(1, 8)}, "ParamExpEyeStar": 0, "ParamExpEyeHighlights": 0, "ParamTongueOut": 0,
+# The model's own defaults: eye highlights are ON (1); DoroPet's 失去高光 expression is what turns them off.
+NEUTRAL = {**{f"ParamExp{i}": 0 for i in range(1, 8)}, "ParamExpEyeStar": 0, "ParamExpEyeHighlights": 1, "ParamTongueOut": 0, "ParamBreath": 0,
            "ParamEyeLOpen": 1, "ParamEyeROpen": 1, "ParamEyeSmile": 0, "ParamMouthOpenY": 0, "ParamAngleX": 0,
            "ParamAngleY": 0, "ParamAngleZ": 0, "ParamBodyAngleY": 0, "ParamBodyAngleZ": 0}
 EXPR = {"黑脸": {"ParamExp1": 1}, "感叹号": {"ParamExp3": 1}, "问号": {"ParamExp4": 1}, "墨镜": {"ParamExp5": 1},
@@ -74,12 +75,15 @@ class Stage(QOpenGLWidget):
         if joints is not None:
             pose["y"] = math.sin(t * 2.5) * 2 + s.get("pose", {}).get("y", 0)
             pose["joints"] = joints
-        sd.draw_body(self, pose)
+        if not s.get("no_body"): sd.draw_body(self, pose)
+        if s.get("no_head"): return
         p = QPainter(self); p.beginNativePainting()
         m.SetScale(.80)
         neck_dx = joints["neck"][0] - 295 if joints else pose.get("music_sway", 0) + pose.get("music_lean", 0)
         neck_dy = joints["neck"][1] - 300 if joints else pose.get("music_neck_y", 0)
-        m.SetOffset(.10 + neck_dx / 300, .18 - (pose["y"] + neck_dy) / 300)
+        # Looking up lifts the chin off the body: lower the head by the measured lift so the neck stays closed.
+        lift = NECK(s.get("params", {}).get("ParamAngleY", 0)) if not s.get("raw_neck") else 0
+        m.SetOffset(.10 + neck_dx / 300, .18 - (pose["y"] + neck_dy + lift) / 300)
         m.Rotate(8 + s.get("head_tilt", 0))
         for i, part in enumerate(m.GetPartIds()):
             if part == "Body_group": m.SetPartOpacity(i, 0)
@@ -93,6 +97,7 @@ class Stage(QOpenGLWidget):
         return img
 
 
+NECK = lambda ay: 0.0
 stage = Stage(); stage.show()
 from PIL import Image
 import numpy as np
@@ -113,6 +118,22 @@ FB = ref.width                                   # framebuffer px (1200 on Retin
 U = FB / 600                                     # framebuffer px per canvas unit
 x0, y0, x1, y1 = bbox(ref)
 SCALE = TARGET_H / ((FEET_CANVAS[1] * U) - y0)   # cell px per framebuffer px
+
+def chin_y(ay):
+    """Lowest head pixel in the middle columns (framebuffer px), head drawn alone."""
+    a = np.asarray(to_pil(stage.shot(action="idle", t=0, no_body=True, raw_neck=True, params={"ParamAngleY": ay})))[..., 3]
+    w = a.shape[1]
+    band = a[:, int(w * .43):int(w * .57)]
+    return np.nonzero(band.max(1) > 60)[0].max()
+
+_c0 = chin_y(0)
+_lift = {ay: (_c0 - chin_y(ay)) / U for ay in (8, 15, 22, 30)}
+print("chin lift (canvas units) by AngleY:", {k: round(v, 1) for k, v in _lift.items()})
+def NECK(ay):
+    if ay <= 0: return 0.0
+    xs = [0, 8, 15, 22, 30]; ys = [0] + [_lift[k] for k in xs[1:]]
+    return float(np.interp(ay, xs, ys)) + 1.5 * min(1, ay / 8)   # a little overlap so no hairline shows
+
 def place(im):
     """Framebuffer image → one 192×208 cell (canvas feet → (96, 202))."""
     small = im.resize((round(im.width * SCALE), round(im.height * SCALE)), Image.LANCZOS)
@@ -188,6 +209,29 @@ for i in range(4):
     put(14, i, action="idle", t=i * .2, pose=P(arm_left=-30 + 25 * S(u), arm_right=-30 - 25 * S(u), left_lift=14 * max(0, S(u)),
         right_lift=14 * max(0, -S(u)), step=0.6 * S(u)), params={**EXPR["感叹号"], "ParamMouthOpenY": 1})
 
+# 15–19 idle loop (40 frames × 160 ms = 6.4 s): what DoroPet's live model does on its own — Cubism's auto-breath
+# head sway (AngleX/Y/Z and Breath at the SDK sample's cycles and 0.5 weight, fitted to whole cycles of the loop),
+# StandingDoro's body breathing, and one blink.
+IDLE_N, L = 40, 6.4
+BLINK = {23: .55, 24: .0, 25: .25, 26: .75}
+for i in range(IDLE_N):
+    t = i * L / IDLE_N
+    w = TAU * t / L
+    eye = BLINK.get(i, 1)
+    put(15 + i // 8, i % 8, action="idle", t=0, pose=P(y=2.6 * S(2 * w)),
+        params=P(ParamAngleX=8 * S(w), ParamAngleY=4 * S(2 * w + .6), ParamAngleZ=5 * S(w + 1.9), ParamBodyAngleZ=2 * S(w + 1.9),
+                 ParamBreath=.5 + .5 * S(2 * w), ParamEyeLOpen=eye, ParamEyeROpen=eye))
+# 20–21 thinking loop (16 frames): 思考, a slow look from side to side, breathing, a blink.
+WORK_N = 16
+WORK_MS = [260] * WORK_N
+for i in range(WORK_N):
+    w = TAU * i / WORK_N
+    eye = {10: .4, 11: 0, 12: .6}.get(i, 1)
+    if i in (10, 11, 12): WORK_MS[i] = 80
+    put(20 + i // 8, i % 8, action="idle", t=0, pose=P(y=2 * S(2 * w)),
+        params={**EXPR["思考"], "ParamAngleX": 13 * S(w), "ParamAngleY": -3 + 3 * S(2 * w), "ParamAngleZ": 4 * S(w + .5),
+                "ParamBreath": .5 + .5 * S(2 * w), "ParamEyeLOpen": eye, "ParamEyeROpen": eye})
+
 sheet.save(HERE / "doro.png")
 
 # Anchors in cell px: the seat is the belly line (feet lifted ~30 units above the feet line); the grab point is the
@@ -199,11 +243,11 @@ meta = {
     "id": "doro", "name": "Doro", "source": "DoroPet-macos: Live2D head (models/Doro/Doro.model3.json) + StandingDoro body",
     "sheet": "doro.png", "cell": [CW, CH], "feetY": 202, "seatY": seat, "grab": [96, top + 16], "look": True, "scale": 1.0,
     "anims": {
-        "idle": {"row": 0, "count": 6, "frameMs": 150},
+        "idle": {"row": 15, "count": IDLE_N, "frameMs": round(L / IDLE_N * 1000), "loop": True},
         "runRight": {"row": 1, "count": 8, "frameMs": 90}, "runLeft": {"row": 2, "count": 8, "frameMs": 90},
         "wave": {"row": 3, "count": 4, "frameMs": 130}, "jump": {"row": 4, "count": 5, "frameMs": 110},
         "failed": {"row": 5, "count": 8, "frameMs": 140}, "waiting": {"row": 6, "count": 6, "frameMs": 170},
-        "work": {"row": 7, "count": 6, "frameMs": 220}, "review": {"row": 8, "count": 6, "frameMs": 160},
+        "work": {"row": 20, "count": WORK_N, "frameMs": WORK_MS, "loop": True}, "review": {"row": 8, "count": 6, "frameMs": 160},
         "perch": {"row": 11, "count": 6, "frameMs": 200}, "dance": {"row": 12, "count": 8, "frameMs": 130},
         "sleep": {"row": 13, "count": 6, "frameMs": 360}, "dangle": {"row": 14, "count": 4, "frameMs": 110},
     },

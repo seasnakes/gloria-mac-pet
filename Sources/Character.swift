@@ -1,9 +1,25 @@
 import AppKit
 
-// The three desk pets. Each has a sprite sheet in GLORIA's layout (8 × 15 cells of 192×208, feet on y=202) and its
-// own rows, timings and anchors; one is on screen at a time, so animation lookups go through `Character.current`.
+// The desk pets. Each has a sprite sheet in GLORIA's layout (8 columns of 192×208 cells, feet on y=202) and a JSON file
+// with its rows, timings and anchors. Several can be on screen at once; every pet carries its own Character.
 
-struct AnimSpec { let row: Int; let count: Int; let frameTime: Double; let durations: [Double]? }
+enum Anim: String, CaseIterable {
+    case idle, runRight, runLeft, wave, jump, failed, waiting, work, review
+    // Sitting on an edge, dance, nap, held up.
+    case perch, dance, sleep, dangle
+}
+
+/// One animation: `count` frames starting at `row`, eight per row (longer loops continue on the next rows).
+struct AnimSpec {
+    let row: Int
+    let count: Int
+    let frameTime: Double
+    let durations: [Double]?
+    /// Plays as one continuous loop (no random holds on the first frame).
+    let loop: Bool
+    /// Frames per key pose (dance: key, then in-betweens toward the next key).
+    let sub: Int
+}
 
 final class Character {
     let id: String
@@ -15,98 +31,105 @@ final class Character {
     let seatY: CGFloat
     let grab: CGPoint
     let scaleMul: CGFloat
-    let greeting: String
-    let pats: [String]
-    let wake: [String]
-    let ouch: [String]
-    let angry: [String]
+    let lines: Lines
+    private var owner: [Cell: Anim] = [:]
 
-    static var current: Character!
+    struct Lines { let greeting: String; let pats, wake, ouch, angry, hello: [String] }
 
-    init(id: String, name: String, tag: String, sprites: Sprites, specs: [Anim: AnimSpec], feetY: CGFloat = 202, seatY: CGFloat = 149,
-         grab: CGPoint = CGPoint(x: 96, y: 72), scaleMul: CGFloat = 1, greeting: String, pats: [String], wake: [String], ouch: [String], angry: [String]) {
+    init(id: String, name: String, tag: String, sprites: Sprites, specs: [Anim: AnimSpec], feetY: CGFloat, seatY: CGFloat,
+         grab: CGPoint, scaleMul: CGFloat, lines: Lines) {
         self.id = id; self.name = name; self.tag = tag; self.sprites = sprites; self.specs = specs
-        self.feetY = feetY; self.seatY = seatY; self.grab = grab; self.scaleMul = scaleMul
-        self.greeting = greeting; self.pats = pats; self.wake = wake; self.ouch = ouch; self.angry = angry
+        self.feetY = feetY; self.seatY = seatY; self.grab = grab; self.scaleMul = scaleMul; self.lines = lines
+        for (a, s) in specs { for i in 0..<s.count { owner[cell(a, i)] = owner[cell(a, i)] ?? a } }
     }
 
     /// How far the seat line sits above the feet line, in cell px.
     var seatRise: CGFloat { feetY - seatY }
     /// From the feet line up to the grab point, in cell px.
     var hang: CGFloat { feetY - grab.y }
+    /// Whether the sheet has the extra rows (perch, dance, sleep, dangle).
+    var hasExtras: Bool { specs[.dangle] != nil && sprites.has(cell(.dangle, 0)) }
 
     func spec(_ a: Anim) -> AnimSpec { specs[a] ?? specs[.idle]! }
+    func count(_ a: Anim) -> Int { spec(a).count }
+    func frameTime(_ a: Anim) -> Double { spec(a).frameTime }
+    func durations(_ a: Anim) -> [Double] { let s = spec(a); return s.durations ?? Array(repeating: s.frameTime, count: s.count) }
+
+    func cell(_ a: Anim, _ i: Int) -> Cell {
+        let s = spec(a)
+        let j = ((i % s.count) + s.count) % s.count
+        return Cell(row: s.row + j / 8, col: j % 8)
+    }
+
+    /// Frame index at time `t` into a loop that uses the per-frame durations.
+    func index(_ a: Anim, at t: Double, speed: Double = 1) -> Int {
+        let d = durations(a)
+        let total = d.reduce(0, +) * speed
+        var u = t.truncatingRemainder(dividingBy: max(total, 0.001))
+        if u < 0 { u += total }
+        for (i, x) in d.enumerated() { u -= x * speed; if u < 0 { return i } }
+        return d.count - 1
+    }
+
+    /// Which animation a cell belongs to (for "is she sitting?").
+    func anim(of c: Cell) -> Anim? { owner[c] }
 
     static let ids = ["gloria", "doro", "usagi"]
     static func title(_ id: String) -> String { ["gloria": "GLORIA · 柔彩", "doro": "Doro", "usagi": "抽象乌萨奇"][id] ?? id }
 
     static func load(_ id: String) -> Character? {
-        switch id {
-        case "doro", "usagi": return fromJSON(id)
-        default: return gloria()
-        }
-    }
-
-    private static func gloria() -> Character? {
-        guard let url = Bundle.main.url(forResource: "spritesheet", withExtension: "png"), let sp = Sprites(url: url) else { return nil }
-        let rows: [(Anim, Int, Int, Double, [Double]?)] = [
-            (.idle, 0, 6, 0.12, nil), (.runRight, 1, 8, 0.075, nil), (.runLeft, 2, 8, 0.075, nil), (.wave, 3, 4, 0.14, nil),
-            (.jump, 4, 5, 0.1, nil), (.failed, 5, 8, 0.13, nil), (.waiting, 6, 6, 0.19, nil), (.work, 7, 6, 0.17, nil),
-            (.review, 8, 6, 0.17, nil),
-            (.perch, 11, 6, 0.16, [0.22, 0.18, 0.09, 0.11, 0.09, 0.26]), (.dance, 12, 8, 0.14, nil),
-            (.sleep, 13, 6, 0.29, [0.26, 0.22, 0.26, 0.52, 0.26, 0.22]), (.dangle, 14, 4, 0.12, nil),
-        ]
-        var specs: [Anim: AnimSpec] = [:]
-        for (a, r, n, ft, d) in rows { specs[a] = AnimSpec(row: r, count: n, frameTime: ft, durations: d) }
-        return Character(id: "gloria", name: "GLORIA", tag: "GLORIA", sprites: sp, specs: specs, seatY: 149, grab: CGPoint(x: 96, y: 72),
-                         greeting: "嗨～我是 GLORIA！把我拖到任何窗口上，我会坐在上面陪你。",
-                         pats: ["嘿嘿～", "摸摸头！", "干嘛呀～", "我在呢。", "今天也一起加油！", "要不要放首歌？我想跳舞。"],
-                         wake: ["唔……我没睡！", "啊，你回来啦～", "眯了一会儿……"],
-                         ouch: ["哎呦……", "头好晕～", "下次轻一点嘛！"],
-                         angry: ["别戳啦！", "再戳我就生气了！", "哼！"])
-    }
-
-    private static func fromJSON(_ id: String) -> Character? {
-        guard let j = Bundle.main.url(forResource: id, withExtension: "json"),
+        guard ids.contains(id),
+              let j = Bundle.main.url(forResource: id, withExtension: "json"),
               let data = try? Data(contentsOf: j),
               let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let png = Bundle.main.url(forResource: id, withExtension: "png"), let sp = Sprites(url: png) else { return nil }
-        let names: [String: Anim] = ["idle": .idle, "runRight": .runRight, "runLeft": .runLeft, "wave": .wave, "jump": .jump,
-                                     "failed": .failed, "waiting": .waiting, "work": .work, "review": .review, "perch": .perch,
-                                     "dance": .dance, "sleep": .sleep, "dangle": .dangle]
         var specs: [Anim: AnimSpec] = [:]
         for (k, v) in m["anims"] as? [String: [String: Any]] ?? [:] {
-            guard let a = names[k], let row = v["row"] as? Int, let n = v["count"] as? Int else { continue }
+            guard let a = Anim(rawValue: k), let row = v["row"] as? Int, let n = v["count"] as? Int, n > 0 else { continue }
             let ms = v["frameMs"]
             let d = (ms as? [NSNumber])?.map { $0.doubleValue / 1000 }
-            let ft = (ms as? NSNumber)?.doubleValue ?? 120
-            specs[a] = AnimSpec(row: row, count: n, frameTime: d.map { $0.reduce(0, +) / Double($0.count) } ?? ft / 1000, durations: d)
+            let ft = ((ms as? NSNumber)?.doubleValue ?? 120) / 1000
+            specs[a] = AnimSpec(row: row, count: n, frameTime: d.map { $0.reduce(0, +) / Double($0.count) } ?? ft,
+                                durations: d?.count == n ? d : nil, loop: v["loop"] as? Bool ?? false, sub: max(1, v["sub"] as? Int ?? 1))
         }
         guard specs[.idle] != nil else { return nil }
         func num(_ k: String, _ d: Double) -> CGFloat { CGFloat((m[k] as? NSNumber)?.doubleValue ?? d) }
         let g = (m["grab"] as? [NSNumber]).map { CGPoint(x: $0[0].doubleValue, y: $0[1].doubleValue) } ?? CGPoint(x: 96, y: 40)
-        if id == "doro" {
-            return Character(id: id, name: "Doro", tag: "DORO", sprites: sp, specs: specs, feetY: num("feetY", 202), seatY: num("seatY", 188),
-                             grab: g, scaleMul: num("scale", 1.15),
-                             greeting: "Doro～！欧润吉在哪里？",
-                             pats: ["Doro～", "欧润吉！", "嘿嘿嘿", "Doro Doro～", "要欧润吉！"],
-                             wake: ["Doro？", "欧润吉……梦到欧润吉了……"],
-                             ouch: ["呜哇——", "Doro 晕了……", "欧润吉掉了！"],
-                             angry: ["Doro 生气了！", "不给欧润吉就别戳！", "哼——"])
+        let (name, tag, mul, lines) = persona(id)
+        return Character(id: id, name: name, tag: tag, sprites: sp, specs: specs, feetY: num("feetY", 202), seatY: num("seatY", 149),
+                         grab: g, scaleMul: mul * num("scale", 1), lines: lines)
+    }
+
+    private static func persona(_ id: String) -> (String, String, CGFloat, Lines) {
+        switch id {
+        case "doro":
+            return ("Doro", "DORO", 1.15, Lines(greeting: "Doro～！欧润吉在哪里？",
+                pats: ["Doro～", "欧润吉！", "嘿嘿嘿", "Doro Doro～", "要欧润吉！"],
+                wake: ["Doro？", "欧润吉……梦到欧润吉了……"],
+                ouch: ["呜哇——", "Doro 晕了……", "欧润吉掉了！"],
+                angry: ["Doro 生气了！", "不给欧润吉就别戳！", "哼——"],
+                hello: ["Doro～", "分你一个欧润吉！", "嘿！"]))
+        case "usagi":
+            return ("乌萨奇", "USAGI", 1.0, Lines(greeting: "呀哈——！",
+                pats: ["呀哈！", "乌拉！", "哈？", "噗噜噜噜噜——", "呼嗯。"],
+                wake: ["呀哈？！", "哈？"],
+                ouch: ["乌拉——！", "噗噜噜……", "哈？？"],
+                angry: ["哈？？？", "乌拉！！", "噗噜噜噜噜噜！"],
+                hello: ["呀哈！", "乌拉～", "哈！"]))
+        default:
+            return ("GLORIA", "GLORIA", 1.0, Lines(greeting: "嗨～我是 GLORIA！把我拖到任何窗口上，我会坐在上面陪你。",
+                pats: ["嘿嘿～", "摸摸头！", "干嘛呀～", "我在呢。", "今天也一起加油！", "要不要放首歌？我想跳舞。"],
+                wake: ["唔……我没睡！", "啊，你回来啦～", "眯了一会儿……"],
+                ouch: ["哎呦……", "头好晕～", "下次轻一点嘛！"],
+                angry: ["别戳啦！", "再戳我就生气了！", "哼！"],
+                hello: ["嗨～", "一起加油！", "你也在呀～"]))
         }
-        return Character(id: id, name: "乌萨奇", tag: "USAGI", sprites: sp, specs: specs, feetY: num("feetY", 202), seatY: num("seatY", 149),
-                         grab: g, scaleMul: num("scale", 1.0),
-                         greeting: "呀哈——！",
-                         pats: ["呀哈！", "乌拉！", "哈？", "噗噜噜噜噜——", "呼嗯。"],
-                         wake: ["呀哈？！", "哈？"],
-                         ouch: ["乌拉——！", "噗噜噜……", "哈？？"],
-                         angry: ["哈？？？", "乌拉！！", "噗噜噜噜噜噜！"])
     }
 
     /// Menu bar icon: the top of the idle frame (the face).
     func icon(size: CGFloat) -> NSImage? {
-        guard let img = sprites.image(Anim.idle.cell(0)) else { return nil }
-        let top = CGFloat(sprites.top(Anim.idle.cell(0)))
+        guard let img = sprites.image(cell(.idle, 0)) else { return nil }
+        let top = CGFloat(sprites.top(cell(.idle, 0)))
         let h = id == "usagi" ? 100.0 : (feetY - top) * 0.62
         let y = id == "usagi" ? top + 22 : top
         let w = h * 1.08

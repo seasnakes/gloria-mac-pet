@@ -43,10 +43,17 @@ enum Prefs {
     static var wander: Bool { get { bool("wander", true) } set { d.set(newValue, forKey: "wander") } }
     static var nap: Bool { get { bool("nap", true) } set { d.set(newValue, forKey: "nap") } }
     static var chase: Bool { get { bool("chase", true) } set { d.set(newValue, forKey: "chase") } }
-    static var character: String {
-        get { d.string(forKey: "character") ?? "gloria" }
-        set { d.set(newValue, forKey: "character"); d.synchronize() }
+    /// Characters on screen, in order. (Older versions kept a single "character".)
+    static var shown: [String] {
+        get {
+            let v = (d.stringArray(forKey: "shown") ?? [d.string(forKey: "character") ?? "gloria"]).filter { Character.ids.contains($0) }
+            return v.isEmpty ? ["gloria"] : v
+        }
+        set { d.set(newValue, forKey: "shown"); d.synchronize() }
     }
+    /// Which character stands in for an agent ("claude"/"codex"); defaults to the first one on screen.
+    static func role(_ source: String) -> String { d.string(forKey: "role.\(source)") ?? shown[0] }
+    static func setRole(_ source: String, _ id: String) { d.set(id, forKey: "role.\(source)"); d.synchronize() }
 }
 
 // GLORIA 柔彩 palette.
