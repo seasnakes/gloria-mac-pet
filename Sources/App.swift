@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var pet: Pet!
@@ -8,6 +9,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var status: NSStatusItem!
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        // One GLORIA at a time (e.g. the copy in Applications and the one in the project folder).
+        let me = ProcessInfo.processInfo.processIdentifier
+        if let id = Bundle.main.bundleIdentifier,
+           NSRunningApplication.runningApplications(withBundleIdentifier: id).contains(where: { $0.processIdentifier != me }) {
+            NSApp.terminate(nil)
+            return
+        }
         guard let ch = Character.load(Prefs.character) ?? Character.load("gloria") else {
             let a = NSAlert()
             a.messageText = "找不到 GLORIA 的精灵图"
@@ -67,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ n: Notification) {
+        UserDefaults.standard.synchronize()
         server.stop()
         music.stopTap()
     }
@@ -127,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         m.addItem(item("自己溜达", #selector(toggleWander), on: Prefs.wander))
         m.addItem(item("闲着会打盹（3 分钟没操作）", #selector(toggleNap), on: Prefs.nap))
         m.addItem(item("追光标", #selector(toggleChase), on: Prefs.chase))
+        m.addItem(item("登录时启动", #selector(toggleLogin), on: SMAppService.mainApp.status == .enabled))
         m.addItem(.separator())
 
         m.addItem(item("随音乐跳舞", #selector(toggleDance), on: Prefs.dance))
@@ -158,6 +168,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleWander() { Prefs.wander.toggle() }
     @objc func toggleNap() { Prefs.nap.toggle() }
     @objc func toggleChase() { Prefs.chase.toggle() }
+    @objc func toggleLogin() { setLogin(SMAppService.mainApp.status != .enabled) }
+
+    /// Start at login through macOS's own Login Items (System Settings › General › Login Items).
+    @discardableResult
+    func setLogin(_ on: Bool) -> String {
+        do {
+            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            pet.say(on ? "好～以后登录 Mac 我就自己出来。" : "以后登录时我就不自己出来啦。", duration: 3)
+            return "ok"
+        } catch {
+            pet.say("没设置成功：\(error.localizedDescription)", duration: 5)
+            return error.localizedDescription
+        }
+    }
     @objc func pickCharacter(_ sender: NSMenuItem) { switchCharacter(Character.ids[sender.tag]) }
     @objc func toggleDance() { Prefs.dance.toggle() }
     @objc func toggleTap() { Prefs.beatTap.toggle(); if !Prefs.beatTap { music.stopTap() } }
@@ -202,6 +226,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "character": switchCharacter(m["id"] as? String ?? "gloria")
         case "launch": pet.debugDockBounce()
         case "huskreset": brain.clear()
+        case "quit":
+            UserDefaults.standard.synchronize()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { NSApp.terminate(nil) }
+        case "login":
+            let r = setLogin((m["on"] as? Bool) ?? true)
+            return ["result": r, "status": SMAppService.mainApp.status.rawValue, "path": Bundle.main.bundlePath]
         case "pointer": pet.fakePointer = (CGPoint(x: num("x", 0), y: num("y", 0)), now() + num("seconds", 3))
         case "play":
             let names: [String: Anim] = ["idle": .idle, "wave": .wave, "jump": .jump, "failed": .failed, "waiting": .waiting, "work": .work,

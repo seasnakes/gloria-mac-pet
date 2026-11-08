@@ -3,16 +3,16 @@
 参考 [Capri](https://github.com/lachydotmcg/capri-desktop) 的思路，用原生 Swift（AppKit + Core Audio）给 GLORIA 做的 Mac 桌面伙伴。
 没有使用 Capri 的代码或美术；角色是已验收的柔彩 Q 版精灵图：原 11 行（9 种状态 + 16 方向看光标），加上 2026-11-07 补画并验收的 4 行（窗沿坐、跳舞、睡觉、被拎起），来源 `Codex桌宠-柔彩GLORIA/extend-perch-dance-sleep-20261107/output/spritesheet-extended-v3.png`。
 
-版本 0.3.0 · Apple Silicon · macOS 14.2+
+版本 0.3.3 · Apple Silicon · macOS 14.2+
 
 ## 运行
 
 ```bash
-bash build.sh          # 生成 GLORIA.app（需要 Xcode 或 Command Line Tools）
-open GLORIA.app
+bash build.sh             # 生成 GLORIA.app（需要 Xcode 或 Command Line Tools）
+bash build.sh --install   # 再装进 /Applications 并从那里启动（会先让正在运行的那份正常退出）
 ```
 
-她只在菜单栏显示一个头像，不占 Dock。右键她、或点菜单栏头像打开菜单。
+平时从「应用程序」里打开 GLORIA。同一时间只会运行一份。她不占 Dock，只在菜单栏放一个当前角色的小头像（刘海屏图标多时可能被挡住，外接屏的菜单栏能看到）。右键她本人也能打开同一个菜单；找不到她就点「叫她过来」，她会出现在鼠标所在的屏幕上。菜单里的「登录时启动」用系统的「登录项」，在 系统设置 › 通用 › 登录项 里也能关。
 
 ## 角色（一次一个，菜单「角色」里切换）
 

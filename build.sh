@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP="$ROOT/GLORIA.app"
-VERSION="0.3.0"
+VERSION="0.3.3"
 ARCH="$(uname -m)"
 
 rm -rf "$APP"
@@ -60,3 +60,19 @@ swiftc -O -swift-version 5 -target "$ARCH-apple-macosx14.2" \
 
 codesign --force --deep --sign - "$APP"
 echo "$APP"
+
+# bash build.sh --install   → copy into /Applications and (re)start it there
+if [ "${1:-}" = "--install" ]; then
+  # Ask the running copy to quit cleanly (keeps its settings); fall back to pkill.
+  for x in /Applications/GLORIA.app/Contents/MacOS/GLORIA "$APP/Contents/MacOS/GLORIA"; do
+    [ -x "$x" ] && "$x" --ctl '{"ctl":"quit"}' >/dev/null 2>&1 && break
+  done
+  for i in $(seq 20); do pgrep -x GLORIA >/dev/null || break; sleep 0.3; done
+  pkill -x GLORIA 2>/dev/null || true
+  for i in $(seq 20); do pgrep -x GLORIA >/dev/null || break; sleep 0.3; done
+  rm -rf /Applications/GLORIA.app
+  ditto "$APP" /Applications/GLORIA.app
+  sleep 1
+  open /Applications/GLORIA.app
+  echo "installed: /Applications/GLORIA.app"
+fi

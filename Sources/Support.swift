@@ -45,7 +45,7 @@ enum Prefs {
     static var chase: Bool { get { bool("chase", true) } set { d.set(newValue, forKey: "chase") } }
     static var character: String {
         get { d.string(forKey: "character") ?? "gloria" }
-        set { d.set(newValue, forKey: "character") }
+        set { d.set(newValue, forKey: "character"); d.synchronize() }
     }
 }
 
