@@ -1,7 +1,7 @@
 import AppKit
 import Darwin
 
-// Code / Husk mode, modelled on Capri's: Claude Code and Codex call `GLORIA --hook claude|codex` from their own hooks.
+// Code / Husk mode, modelled on Capri's: Claude Code, Codex, Cursor and DSH call `GLORIA --hook <agent>` from their own hooks.
 // The hook forwards a slimmed copy of the event over a private Unix socket; GLORIA only watches and never answers for them.
 
 enum Wire {
@@ -56,13 +56,13 @@ enum Wire {
 enum HookClient {
     static let keep = ["hook_event_name", "session_id", "cwd", "tool_name", "tool_input", "tool_use_id", "error", "is_interrupt",
                        "prompt", "message", "title", "notification_type", "last_assistant_message", "agent_id", "agent_type",
-                       "source", "reason", "trigger", "stop_hook_active"]
+                       "source", "reason", "trigger", "stop_hook_active", "final_status"]
     static let inputKeep = ["file_path", "file_paths", "path", "command", "cmd", "pattern", "url", "query", "description",
                             "subagent_type", "notebook_path", "questions",
                             // computer use: Codex's cua_repl code, Claude's action / coordinates (typed text: only its length)
                             "code", "title", "action", "coordinate", "start_coordinate", "scroll_direction", "key", "app"]
 
-    /// `GLORIA --hook claude|codex`: forward stdin's event and exit 0 quickly, printing nothing.
+    /// `GLORIA --hook claude|codex|cursor|dsh`: forward stdin's event and exit 0 quickly, printing nothing.
     static func run(source: String) {
         signal(SIGALRM) { _ in exit(0) }
         alarm(3)
@@ -126,9 +126,31 @@ enum HookClient {
         return o
     }
 
-    /// Codex names things differently; translate to Claude's shapes (after Capri's adapter).
+    /// Cursor's tool names → Claude's (seen from cursor-agent's own hooks).
+    static let cursorTools = ["Shell": "Bash", "StrReplace": "Edit", "MultiEdit": "Edit", "EditNotebook": "NotebookEdit", "Delete": "Delete",
+                              "LS": "Glob", "ReadLints": "Read", "SemanticSearch": "Grep", "Task": "Agent", "TodoWrite": "TodoWrite"]
+    /// DeepSeek Harness's lowercase tools → Claude's (the names dsh-pet's tool table knows, plus the obvious shells).
+    static let dshTools = ["pwsh": "Bash", "bash": "Bash", "shell": "Bash", "exec": "Bash", "read": "Read", "read_image": "Read",
+                           "write": "Write", "edit": "Edit", "str_replace_editor": "Edit", "glob": "Glob", "grep": "Grep",
+                           "web_search": "WebSearch", "web_fetch": "WebFetch", "subagent": "Agent", "subagent_fork": "Agent",
+                           "workflow": "TodoWrite", "todo": "TodoWrite"]
+
+    /// Every agent's event in Claude Code's shape (Codex after Capri's adapter; DSH already speaks it through its hooks bridge).
     static func adapt(_ e: [String: Any], source: String) -> [String: Any]? {
         guard e["hook_event_name"] is String else { return nil }
+        if source == "cursor" { return cursor(e) }
+        if source == "dsh" {
+            var o = e
+            o["session_id"] = "dsh:" + ((e["session_id"] as? String) ?? "default")
+            let tool = e["tool_name"] as? String ?? ""
+            if let t = dshTools[tool.lowercased()] { o["tool_name"] = t }
+            if var i = e["tool_input"] as? [String: Any] {
+                if i["file_path"] == nil { i["file_path"] = i["filePath"] ?? i["path"] }
+                if i["query"] == nil, let q = (i["queries"] as? [Any])?.first { i["query"] = q }
+                o["tool_input"] = i
+            }
+            return o
+        }
         guard source == "codex" else { return e }
         var o = e
         o["session_id"] = "codex:" + ((e["session_id"] as? String) ?? "default")
@@ -161,6 +183,32 @@ enum HookClient {
             o["hook_event_name"] = "Notification"
             o["notification_type"] = "agent_needs_input"
             o["message"] = "Codex 想问你几个问题。"
+        }
+        return o
+    }
+
+    /// Cursor (the editor and cursor-agent): camelCase events, its own tool names. cursor-agent -p only sends tool events
+    /// and sessionEnd, so that one also has to say how the job went.
+    static func cursor(_ e: [String: Any]) -> [String: Any]? {
+        let names = ["sessionStart": "SessionStart", "sessionEnd": "SessionEnd", "beforeSubmitPrompt": "UserPromptSubmit",
+                     "preToolUse": "PreToolUse", "postToolUse": "PostToolUse", "postToolUseFailure": "PostToolUseFailure",
+                     "subagentStart": "SubagentStart", "subagentStop": "SubagentStop", "stop": "Stop",
+                     "afterAgentResponse": "AgentResponse", "preCompact": "PreCompact"]
+        guard let name = names[e["hook_event_name"] as? String ?? ""] else { return nil }
+        var o = e
+        o["hook_event_name"] = name
+        o["session_id"] = "cursor:" + ((e["session_id"] as? String) ?? (e["conversation_id"] as? String) ?? "default")
+        if ((o["cwd"] as? String) ?? "").isEmpty { o["cwd"] = (e["workspace_roots"] as? [String])?.first }
+        if let t = e["tool_name"] as? String {
+            o["tool_name"] = cursorTools[t] ?? (t.hasPrefix("MCP:") ? "mcp__" + t.dropFirst(4).replacingOccurrences(of: ":", with: "__") : t)
+        }
+        switch name {
+        case "PostToolUseFailure": o["error"] = e["error_message"] ?? "failed"
+        case "SubagentStart": o["agent_id"] = e["subagent_id"]; o["agent_type"] = e["subagent_type"]
+        case "SubagentStop": o["agent_type"] = e["subagent_type"]
+        case "Stop" where (e["status"] as? String) == "error": o["hook_event_name"] = "StopFailure"
+        case "AgentResponse": o["last_assistant_message"] = e["text"]
+        default: break
         }
         return o
     }
@@ -229,19 +277,41 @@ final class HuskServer {
     }
 }
 
-/// Writes or removes GLORIA's entries in ~/.claude/settings.json and ~/.codex/hooks.json, keeping everything else.
+/// Writes or removes GLORIA's entries in each agent's hook config, keeping everything else:
+///   Claude Code  ~/.claude/settings.json   ($CLAUDE_CONFIG_DIR)
+///   Codex        ~/.codex/hooks.json       ($CODEX_HOME; Codex asks once whether to trust them)
+///   Cursor       ~/.cursor/hooks.json      (the editor and cursor-agent; its own flat format, "version": 1)
+///   DSH          ~/.dsh/hooks.json         ($DSH_HOME; Claude Code's format, read by DSH's hooks bridge plugin)
 enum HookInstaller {
     static let claudeEvents = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
                                "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "SessionEnd"]
     static let codexEvents = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop",
                               "SessionEnd", "PreCompact", "SubagentStart", "SubagentStop"]
+    static let cursorEvents = ["sessionStart", "sessionEnd", "beforeSubmitPrompt", "preToolUse", "postToolUse", "postToolUseFailure",
+                               "subagentStart", "subagentStop", "stop", "afterAgentResponse", "preCompact"]
+    /// What DSH's bridges run (the official dsh-hooks-claude-code takes the first seven; the rest are ignored where unsupported).
+    static let dshEvents = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SubagentStart", "SubagentStop",
+                            "PostToolUseFailure", "SessionEnd"]
+
+    static func events(_ source: String) -> [String] {
+        ["codex": codexEvents, "cursor": cursorEvents, "dsh": dshEvents][source] ?? claudeEvents
+    }
+    /// Cursor lists hooks per event directly; the others wrap them in matcher groups ({"hooks": [...]}).
+    private static func flat(_ source: String) -> Bool { source == "cursor" }
 
     static func file(_ source: String) -> URL {
         let env = ProcessInfo.processInfo.environment
-        if source == "codex", let dir = env["CODEX_HOME"], !dir.isEmpty { return URL(fileURLWithPath: dir).appendingPathComponent("hooks.json") }
-        if source == "claude", let dir = env["CLAUDE_CONFIG_DIR"], !dir.isEmpty { return URL(fileURLWithPath: dir).appendingPathComponent("settings.json") }
-        let home = env["GLORIA_HOOK_HOME"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
-        return source == "codex" ? home.appendingPathComponent(".codex/hooks.json") : home.appendingPathComponent(".claude/settings.json")
+        func dir(_ k: String) -> URL? { env[k].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } }
+        if source == "codex", let d = dir("CODEX_HOME") { return d.appendingPathComponent("hooks.json") }
+        if source == "claude", let d = dir("CLAUDE_CONFIG_DIR") { return d.appendingPathComponent("settings.json") }
+        if source == "dsh", let d = dir("DSH_HOME") { return d.appendingPathComponent("hooks.json") }
+        let home = dir("GLORIA_HOOK_HOME") ?? FileManager.default.homeDirectoryForCurrentUser
+        switch source {
+        case "codex": return home.appendingPathComponent(".codex/hooks.json")
+        case "cursor": return home.appendingPathComponent(".cursor/hooks.json")
+        case "dsh": return home.appendingPathComponent(".dsh/hooks.json")
+        default: return home.appendingPathComponent(".claude/settings.json")
+        }
     }
 
     static var exe: String { Bundle.main.executablePath ?? CommandLine.arguments[0] }
@@ -254,26 +324,22 @@ enum HookInstaller {
         cmd.hasPrefix("GLORIA_HUSK=1 ") && cmd.hasSuffix("--hook " + source)
     }
 
+    /// The hook entries under one event, whichever format the file uses.
+    private static func entries(_ value: Any?, _ source: String) -> [[String: Any]] {
+        let list = value as? [[String: Any]] ?? []
+        return flat(source) ? list : list.flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }
+    }
+
     /// true when every event has exactly our current command.
     static func installed(_ source: String) -> Bool {
         guard let root = read(source).root, let hooks = root["hooks"] as? [String: Any] else { return false }
         let want = command(source)
-        for name in source == "codex" ? codexEvents : claudeEvents {
-            let groups = hooks[name] as? [[String: Any]] ?? []
-            let found = groups.contains { g in ((g["hooks"] as? [[String: Any]]) ?? []).contains { ($0["command"] as? String) == want } }
-            if !found { return false }
-        }
-        return true
+        return events(source).allSatisfy { name in entries(hooks[name], source).contains { ($0["command"] as? String) == want } }
     }
 
     static func anyOurs(_ source: String) -> Bool {
         guard let root = read(source).root, let hooks = root["hooks"] as? [String: Any] else { return false }
-        for (_, v) in hooks {
-            for g in v as? [[String: Any]] ?? [] {
-                for h in g["hooks"] as? [[String: Any]] ?? [] where ours(h["command"] as? String ?? "", source) { return true }
-            }
-        }
-        return false
+        return hooks.values.contains { v in entries(v, source).contains { ours($0["command"] as? String ?? "", source) } }
     }
 
     private static func read(_ source: String) -> (root: [String: Any]?, raw: Data?) {
@@ -300,27 +366,38 @@ enum HookInstaller {
         var hooks = root["hooks"] as? [String: Any] ?? [:]
         let before = (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data()
 
+        // Take our old entries out (wherever the app was when it wrote them), leave everyone else's alone.
         for (name, value) in hooks {
-            guard let groups = value as? [[String: Any]] else { throw Failure.invalid("\(f.path) 的 \(name) 格式不对，没有改动。") }
+            guard let list = value as? [[String: Any]] else { throw Failure.invalid("\(f.path) 的 \(name) 格式不对，没有改动。") }
             var kept: [[String: Any]] = []
             var removed = false
-            for g in groups {
-                let entries = g["hooks"] as? [[String: Any]] ?? []
-                let other = entries.filter { !ours($0["command"] as? String ?? "", source) }
-                if other.count == entries.count { kept.append(g); continue }
+            for g in list {
+                if flat(source) {
+                    if ours(g["command"] as? String ?? "", source) { removed = true } else { kept.append(g) }
+                    continue
+                }
+                let inner = g["hooks"] as? [[String: Any]] ?? []
+                let other = inner.filter { !ours($0["command"] as? String ?? "", source) }
+                if other.count == inner.count { kept.append(g); continue }
                 removed = true
                 if !other.isEmpty { var r = g; r["hooks"] = other; kept.append(r) }
             }
             if removed { if kept.isEmpty { hooks.removeValue(forKey: name) } else { hooks[name] = kept } }
         }
         if on {
-            for name in source == "codex" ? codexEvents : claudeEvents {
-                var groups = hooks[name] as? [[String: Any]] ?? []
-                var entry: [String: Any] = ["type": "command", "command": command(source), "timeout": source == "codex" ? 3 : 10]
+            for name in events(source) {
+                var list = hooks[name] as? [[String: Any]] ?? []
+                var entry: [String: Any] = ["command": command(source), "timeout": source == "claude" ? 10 : 3]
                 if source == "claude" { entry["async"] = true }
-                groups.append(["hooks": [entry]])
-                hooks[name] = groups
+                if flat(source) {
+                    list.append(entry)
+                } else {
+                    entry["type"] = "command"
+                    list.append(["hooks": [entry]])
+                }
+                hooks[name] = list
             }
+            if flat(source) && root["version"] == nil { root["version"] = 1 }
         }
         if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
         let after = (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data()
@@ -339,10 +416,10 @@ enum HookInstaller {
 
 /// Turns hook events into what she does and says.
 final class HuskBrain {
-    /// The pet standing in for an agent ("claude"/"codex"), and every pet on screen.
+    /// The pet standing in for an agent (see Agents), and every pet on screen.
     var petFor: (String) -> Pet? = { _ in nil }
     var pets: () -> [Pet] = { [] }
-    struct Session { var source: String; var busy = false; var awaiting: String?; var lastTool = ""; var lastAt = now() }
+    struct Session { var source: String; var busy = false; var awaiting: String?; var lastTool = ""; var lastAt = now(); var reply = "" }
     private(set) var sessions: [String: Session] = [:]
     /// One agent waiting on another (Claude running `codex exec`, …), keyed by the caller's tool call.
     struct Link { let from: String; let to: String; let task: String; let at: Double }
@@ -357,8 +434,8 @@ final class HuskBrain {
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.expire() }
     }
 
-    private func who(_ src: String) -> String { src == "codex" ? "Codex" : "Claude" }
-    private func tag(_ src: String) -> String { src == "codex" ? "CODEX" : "CLAUDE CODE" }
+    private func who(_ src: String) -> String { src == "claude" ? "Claude" : Agents.name(src) }
+    private func tag(_ src: String) -> String { Agents.tag(src) }
 
     func handle(_ e: [String: Any]) {
         guard let name = e["hook_event_name"] as? String else { return }
@@ -429,15 +506,14 @@ final class HuskBrain {
             } else if !msg.isEmpty && type != "auth_success" {
                 pet.say(cap(msg, 80), tag: tg, duration: 4)
             }
+        case "AgentResponse":
+            // Cursor sends the reply on its own, before stop.
+            s.reply = e["last_assistant_message"] as? String ?? s.reply
         case "Stop":
             s.busy = false
             s.awaiting = nil
-            pet.retireClone(nil)
-            pet.play(.review)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak pet] in pet?.play(.wave, loops: 2) }
-            let summary = gist(e["last_assistant_message"] as? String ?? "")
-            pet.say(summary.isEmpty ? "\(w) 做完啦！" : "做完啦！\(summary)", tag: tg, duration: summary.isEmpty ? 3 : 7)
-            pet.sparkle("✦", color: Palette.butter, count: 3)
+            done(pet, w, tg, e["last_assistant_message"] as? String ?? s.reply)
+            s.reply = ""
         case "StopFailure":
             s.busy = false
             s.awaiting = nil
@@ -455,6 +531,7 @@ final class HuskBrain {
             pet.glitch(1.1)
             pet.say("记忆压缩中……刚才的细节要模糊啦。", tag: tg, duration: 3.2)
         case "SessionEnd":
+            let wasBusy = s.busy
             s.busy = false
             s.awaiting = nil
             pet.retireClone(nil)
@@ -462,7 +539,13 @@ final class HuskBrain {
             cuaApp.removeValue(forKey: sid)
             links = links.filter { $0.value.from != src || now() - $0.value.at < 5 }
             refresh()
-            if (e["reason"] as? String) != "clear" { pet.play(.wave, loops: 2); pet.say("\(w) 下线了，拜拜～", tag: tg, duration: 3) }
+            // cursor-agent -p sends no stop: the end of a busy session is the end of the job.
+            let status = (e["final_status"] as? String) ?? ""
+            if wasBusy && src == "cursor" && !status.isEmpty {
+                if status == "completed" { done(pet, w, tg, s.reply) } else {
+                    pet.play(.failed); pet.say(status == "aborted" ? "\(w) 被叫停了。" : "\(w) 出错停下了……", tag: tg, duration: 4)
+                }
+            } else if (e["reason"] as? String) != "clear" { pet.play(.wave, loops: 2); pet.say("\(w) 下线了，拜拜～", tag: tg, duration: 3) }
             return
         default: break
         }
@@ -542,6 +625,16 @@ final class HuskBrain {
         return true
     }
 
+    /// The job is done: look it over, wave, and say what came of it.
+    private func done(_ pet: Pet, _ w: String, _ tg: String, _ reply: String) {
+        pet.retireClone(nil)
+        pet.play(.review)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak pet] in pet?.play(.wave, loops: 2) }
+        let summary = gist(reply)
+        pet.say(summary.isEmpty ? "\(w) 做完啦！" : "做完啦！\(summary)", tag: tg, duration: summary.isEmpty ? 3 : 7)
+        pet.sparkle("✦", color: Palette.butter, count: 3)
+    }
+
     private func failed(_ pet: Pet, _ w: String, _ tg: String, _ tool: String) {
         pet.play(.failed)
         if now() - lastFailSay > 8 {
@@ -588,6 +681,8 @@ final class HuskBrain {
         case "WebSearch": return "在搜网页：\(cap((input["query"] as? String) ?? "", 30))"
         case "Task", "Agent": return "派出分身"
         case "TodoWrite": return "在排计划"
+        case "Delete": return file.isEmpty ? "在删文件" : "在删 \(file)"
+        case "run_code": return "在跑一段代码"
         default:
             if tool.hasPrefix("mcp__") { return "在用 \(tool.split(separator: "_").last.map(String.init) ?? tool)" }
             return tool.isEmpty ? "在忙" : "在用 \(tool)"
@@ -615,8 +710,15 @@ final class HuskBrain {
 
     var summary: String {
         if let s = sessions.values.first(where: { $0.awaiting != nil }) { return "\(who(s.source)) 等你批准" }
-        let busy = sessions.values.filter { $0.busy }
-        if let b = busy.first { return "\(who(b.source)) 工作中" + (busy.count > 1 ? " ×\(busy.count)" : "") }
+        // "Claude、Cursor 工作中", with ×n when one agent runs several sessions at once.
+        let busy = sessions.values.filter { $0.busy }.map(\.source)
+        if !busy.isEmpty {
+            let parts = Agents.ids.compactMap { id -> String? in
+                let n = busy.filter { $0 == id }.count
+                return n == 0 ? nil : who(id) + (n > 1 ? " ×\(n)" : "")
+            }
+            return parts.joined(separator: "、") + " 工作中"
+        }
         return sessions.isEmpty ? "空闲" : "待命"
     }
 

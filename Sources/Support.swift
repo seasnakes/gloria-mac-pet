@@ -37,8 +37,12 @@ enum Prefs {
     static var dance: Bool { get { bool("dance", true) } set { d.set(newValue, forKey: "dance") } }
     static var beatTap: Bool { get { bool("beatTap", true) } set { d.set(newValue, forKey: "beatTap") } }
     static var browserMusic: Bool { get { bool("browserMusic", true) } set { d.set(newValue, forKey: "browserMusic") } }
-    static var huskClaude: Bool { get { bool("huskClaude", false) } set { d.set(newValue, forKey: "huskClaude") } }
-    static var huskCodex: Bool { get { bool("huskCodex", false) } set { d.set(newValue, forKey: "huskCodex") } }
+    /// Whether her hooks are in this agent's config ("claude", "codex", "cursor", "dsh"). The first two keep their old keys.
+    static func husk(_ src: String) -> Bool { bool(huskKey(src), false) }
+    static func setHusk(_ src: String, _ on: Bool) { d.set(on, forKey: huskKey(src)); d.synchronize() }
+    private static func huskKey(_ src: String) -> String { ["claude": "huskClaude", "codex": "huskCodex"][src] ?? "husk.\(src)" }
+    /// Asked once, on the first launch, whether to hook up the agents found on this Mac.
+    static var onboarded: Bool { get { bool("onboarded", false) } set { d.set(newValue, forKey: "onboarded") } }
     static var chime: Bool { get { bool("chime", true) } set { d.set(newValue, forKey: "chime") } }
     static var wander: Bool { get { bool("wander", true) } set { d.set(newValue, forKey: "wander") } }
     static var nap: Bool { get { bool("nap", true) } set { d.set(newValue, forKey: "nap") } }
@@ -51,9 +55,35 @@ enum Prefs {
         }
         set { d.set(newValue, forKey: "shown"); d.synchronize() }
     }
-    /// Which character stands in for an agent ("claude"/"codex"); defaults to the first one on screen.
+    /// Which character stands in for an agent (see Agents); defaults to the first one on screen.
     static func role(_ source: String) -> String { d.string(forKey: "role.\(source)") ?? shown[0] }
     static func setRole(_ source: String, _ id: String) { d.set(id, forKey: "role.\(source)"); d.synchronize() }
+}
+
+/// The coding agents a pet can stand in for. Each one calls `GLORIA --hook <id>` from its own hooks.
+enum Agents {
+    struct Info {
+        let id, name, tag: String
+        /// Where its hooks live, for the first-launch check ("is it on this Mac?").
+        let home: String
+    }
+    static let all: [Info] = [
+        Info(id: "claude", name: "Claude Code", tag: "CLAUDE CODE", home: ".claude"),
+        Info(id: "codex", name: "Codex", tag: "CODEX", home: ".codex"),
+        Info(id: "cursor", name: "Cursor", tag: "CURSOR", home: ".cursor"),
+        Info(id: "dsh", name: "DSH", tag: "DSH", home: ".dsh"),
+    ]
+    static let ids = all.map(\.id)
+    static func info(_ id: String) -> Info { all.first { $0.id == id } ?? all[0] }
+    static func name(_ id: String) -> String { info(id).name }
+    static func tag(_ id: String) -> String { info(id).tag }
+    /// Hooked up, in menu order.
+    static var on: [String] { ids.filter { Prefs.husk($0) } }
+    /// Installed on this Mac (its config folder exists).
+    static func present(_ id: String) -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(info(id).home)
+        return FileManager.default.fileExists(atPath: home.path)
+    }
 }
 
 // GLORIA 柔彩 palette.

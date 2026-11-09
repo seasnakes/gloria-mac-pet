@@ -134,21 +134,27 @@ final class Courier {
 /// Spotting one agent calling another from its tool calls.
 enum AgentCalls {
     private static func re(_ s: String) -> NSRegularExpression { try! NSRegularExpression(pattern: s) }
-    // The program in command position (after start, ;, &&, |, (, $( or a backtick, env assignments and wrappers).
-    private static let lead = #"(?:^|[;&|(`\n]|\$\()\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:env|nohup|time|command|exec|caffeinate(?:\s+-\w+)*|g?timeout\s+\S+)\s+)*"#
+    // The program in command position (after start, ;, &&, |, (, $( or a backtick, do/then/else, env assignments and wrappers).
+    private static let lead = #"(?:^|[;&|(`\n]|\$\()\s*(?:(?:do|then|else|!)\s+)*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:env|nohup|time|command|exec|caffeinate(?:\s+-\w+)*|g?timeout\s+\S+)\s+)*"#
     private static let codex = re(lead + #"(?:\S*/)?(?:codex|\$\{?CODEX\}?)(?=\s|$)(?!\s+(?:--version|-V|--help|-h|help|login|logout|mcp|mcp-server|completion|features|apply|debug)\b)"#)
     private static let claude = re(lead + #"(?:\S*/)?claude(?=\s|$)(?!\s+(?:--version|-v|--help|-h|mcp|config|doctor|update|install|migrate-installer|setup-token|plugin|auth)\b)"#)
+    private static let cursor = re(lead + #"(?:\S*/)?cursor-agent(?=\s|$)(?!\s+(?:--version|-v|--help|-h|--list-models|models|login|logout|status|update|mcp|ls)\b)"#)
+    private static let dsh = re(lead + #"(?:\S*/)?dsh(?=\s|$)(?!\s+(?:--version|-v|--help|-h|plugin|config|login|logout|update|doctor)\b)"#)
     private static let quoted = re(#"["“']([^"”']{4,})["”']"#)
 
-    /// The agent this tool call reaches out to ("codex"/"claude"), if any.
+    /// The agent this tool call reaches out to (another of Agents.ids), if any.
     static func callee(from src: String, tool: String, input: [String: Any]) -> String? {
-        let other = src == "codex" ? "claude" : "codex"
         let t = tool.lowercased()
-        if t.hasPrefix("mcp__") && t.contains(other) { return other }
-        if t == "task" || t == "agent", ((input["subagent_type"] as? String) ?? "").lowercased().contains(other) { return other }
+        for other in Agents.ids where other != src {
+            if t.hasPrefix("mcp__") && t.contains(other) { return other }
+            if t == "task" || t == "agent", ((input["subagent_type"] as? String) ?? "").lowercased().contains(other) { return other }
+        }
         guard tool == "Bash", let cmd = input["command"] as? String else { return nil }
-        let r = other == "codex" ? codex : claude
-        return r.firstMatch(in: cmd, range: NSRange(cmd.startIndex..., in: cmd)) != nil ? other : nil
+        let range = NSRange(cmd.startIndex..., in: cmd)
+        for (other, r) in [("codex", codex), ("claude", claude), ("cursor", cursor), ("dsh", dsh)] where other != src {
+            if r.firstMatch(in: cmd, range: range) != nil { return other }
+        }
+        return nil
     }
 
     /// A short line describing the job handed over (the first quoted argument, if there is one).

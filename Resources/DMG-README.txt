@@ -13,11 +13,17 @@ GLORIA · Mac 桌宠
 需要
   macOS 14.2 或更新；Apple Silicon 和 Intel Mac 都可以。
 
-让她当 Claude Code / Codex 的化身
-  菜单 › Claude Code 化身 / Codex 化身 › 接入。会在 ~/.claude/settings.json 或 ~/.codex/hooks.json 里加入
-  GLORIA 自己的钩子（改之前会备份）。挪动过 App 的位置后重新打开一次，钩子会自动指向新位置。
+让她当 AI 编程助手的化身（Claude Code / Codex / Cursor / DSH）
+  第一次打开时，她会看看这台 Mac 上装了哪些（~/.claude、~/.codex、~/.cursor、~/.dsh），弹窗问你要接哪几个。
+  勾上的会在对应的钩子文件里加入 GLORIA 的条目（改之前会备份），重开一次那个 agent 就生效：
+    Claude Code  ~/.claude/settings.json
+    Codex        ~/.codex/hooks.json      第一次会问要不要信任这些钩子，选信任
+    Cursor       ~/.cursor/hooks.json     编辑器和 cursor-agent 都算，新开对话就生效
+    DSH          ~/.dsh/hooks.json        DSH 还要装官方 hooks 桥接插件 @deepseek-ai/dsh-hooks-claude-code
+                                          （连同 dsh-hook-protocol），configPath 指向这个文件；命令见项目主页
+  以后随时在菜单 ›「<名字> 化身」› 接入 里开关。挪动过 App 的位置后重新打开一次，钩子会自动指向新位置。
 
 卸载
-  退出 GLORIA（菜单 › 退出），先在菜单里关掉两个「化身」的接入，再把 GLORIA 拖进废纸篓。
+  退出 GLORIA（菜单 › 退出），先在菜单里关掉各个「化身」的接入，再把 GLORIA 拖进废纸篓。
 
 项目主页：https://github.com/seasnakes/gloria-mac-pet

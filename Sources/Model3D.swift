@@ -67,6 +67,10 @@ final class Model3D {
     private let flash = SCNNode()
     private var targets: [String: (color: MTLTexture, depth: MTLTexture)] = [:]
     private static let core = SIMD3<Double>(0, 0, 1.17)
+    /// Centre of the black visor sphere (Core) in Bot_root's space, and the eyes' resting turn. The LED faces are curved
+    /// panels hugging that sphere, so a glance turns them about its centre; sliding them sideways sank one into the glass.
+    private let visor: SIMD3<Float>
+    private let eyeRest: simd_quatf
 
     init?(url: URL) {
         guard let dev = Model3D.device, let sc = try? SCNScene(url: url, options: [.convertToYUp: true]) else { return nil }
@@ -84,6 +88,12 @@ final class Model3D {
             let a = node.eulerAngles
             bs[ObjectIdentifier(node)] = (node.simdPosition, SIMD3(Double(a.x), Double(a.y), Double(a.z)), node.simdScale)
         }
+        var vc = SIMD3<Float>(0, 0, 1)
+        if let sphere = n("Core")?.childNodes.first(where: { $0.geometry != nil }) ?? n("Core") {
+            let (lo, hi) = sphere.boundingBox
+            vc = b.simdConvertPosition((SIMD3<Float>(lo) + SIMD3<Float>(hi)) / 2, from: sphere)
+        }
+        visor = vc; eyeRest = e.simdOrientation
         scene = sc
         bot = b; earL = el; earR = er; finL = fl; finR = fr; eye = e; ring = r; cursor = c
         faces = fs; glow = g; base = bs
@@ -209,7 +219,11 @@ final class Model3D {
         }
         place(earL, p.earL); place(earR, p.earR); place(finL, p.finL); place(finR, p.finR)
         if let b = base[ObjectIdentifier(eye)] {
-            eye.simdPosition = b.pos + SIMD3<Float>(Float(p.glance.x), 0, Float(p.glance.y))
+            // Glance = roll the eyes over the visor: arc length glance.x across (about Blender Z), glance.y up (about X).
+            let off = b.pos - visor, r = max(0.2, simd_length(off))
+            let q = simd_quatf(angle: Float(p.glance.x) / r, axis: [0, 0, 1]) * simd_quatf(angle: -Float(p.glance.y) / r, axis: [1, 0, 0])
+            eye.simdPosition = visor + q.act(off)
+            eye.simdOrientation = q * eyeRest
             eye.simdScale = [b.scale.x, b.scale.y, b.scale.z * Float(max(0.06, 1 - p.blink))]
         }
         for (name, f) in faces { f.isHidden = name != p.face }

@@ -92,6 +92,9 @@ final class Bubble {
     private(set) var visible = false
     private(set) var sticky = false
     private var hideAt: Double = 0
+    private var shownAt: Double = 0
+    /// The latest caption that arrived while a speech bubble was still being read; shown once it has had its moment.
+    private var pending: (text: String, tag: String?, duration: Double?)?
     var kind: BubbleView.Kind { view.kind }
     var text: String { view.text }
 
@@ -104,8 +107,23 @@ final class Bubble {
     }
 
     func show(_ text: String, tag: String? = nil, kind: BubbleView.Kind = .speech, duration: Double? = nil, sticky: Bool = false) {
-        // A quiet caption never replaces something louder that is still up.
-        if kind == .caption && visible && view.kind != .caption && (self.sticky || now() < hideAt - 0.3) { return }
+        // A quiet caption never replaces an alert, and lets a speech bubble stay 1.4 s before taking over; a caption
+        // that comes sooner waits for that (only the newest one), unless something louder arrives first.
+        if kind == .caption && visible && view.kind != .caption && (self.sticky || now() < hideAt - 0.3) {
+            guard !self.sticky && view.kind == .speech else { return }
+            let ready = shownAt + 1.4
+            if now() < ready {
+                pending = (text, tag, duration)
+                DispatchQueue.main.asyncAfter(deadline: .now() + (ready - now()) + 0.02) { [weak self] in
+                    guard let self, let p = self.pending, p.text == text else { return }
+                    self.pending = nil
+                    self.show(p.text, tag: p.tag, kind: .caption, duration: p.duration)
+                }
+                return
+            }
+        }
+        if kind != .caption { pending = nil }
+        shownAt = now()
         view.kind = kind
         view.label = tag
         view.text = text

@@ -46,8 +46,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         RunLoop.main.add(poll, forMode: .common)
 
         // Hooks point at this copy of the app; if it moved, point them here again.
-        for src in ["claude", "codex"] where (src == "claude" ? Prefs.huskClaude : Prefs.huskCodex) && !HookInstaller.installed(src) {
-            try? HookInstaller.set(src, on: true)
+        for src in Agents.on where !HookInstaller.installed(src) { try? HookInstaller.set(src, on: true) }
+        if !Prefs.onboarded { DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.onboard() } }
+    }
+
+    /// First launch on a Mac: offer to hook up the agents that are installed here (nothing is changed without a yes).
+    func onboard() {
+        Prefs.onboarded = true
+        let found = Agents.all.filter { Agents.present($0.id) && !Prefs.husk($0.id) }
+        guard !found.isEmpty else { return }
+        let a = NSAlert()
+        a.messageText = "让她当 AI 编程助手的化身？"
+        a.informativeText = "在这台 Mac 上找到了下面这些。勾上的会装上 GLORIA 的钩子（改之前会备份，菜单里随时能关）："
+            + "它们干活、跑命令、等你批准、做完时，她都会演出来、冒泡告诉你。"
+        let box = NSStackView()
+        box.orientation = .vertical
+        box.alignment = .leading
+        var checks: [(String, NSButton)] = []
+        for info in found {
+            let note = ["codex": "（之后 Codex 会问一次要不要信任钩子）", "dsh": "（DSH 还要装 hooks 插件，见 README）"][info.id] ?? ""
+            let c = NSButton(checkboxWithTitle: info.name + note, target: nil, action: nil)
+            c.state = .on
+            box.addArrangedSubview(c)
+            checks.append((info.id, c))
+        }
+        box.frame = NSRect(x: 0, y: 0, width: 360, height: CGFloat(checks.count) * 24)
+        a.accessoryView = box
+        a.addButton(withTitle: "接入")
+        a.addButton(withTitle: "以后再说")
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn else {
+            focus.say("想接的时候，右键我 › 化身 › 接入。", duration: 4)
+            return
+        }
+        let picked = checks.filter { $0.1.state == .on }.map(\.0)
+        var failed: [String] = []
+        for src in picked {
+            do { try HookInstaller.set(src, on: true); Prefs.setHusk(src, true) } catch { failed.append("\(Agents.name(src))：\(error)") }
+        }
+        afterRoster()
+        if !failed.isEmpty { focus.say("有的没接上——" + failed.joined(separator: "；"), duration: 7) }
+        else if !picked.isEmpty {
+            focus.play(.wave)
+            focus.say("接好了：\(picked.map(Agents.name).joined(separator: "、"))。重开一次它们就生效啦。", duration: 6)
         }
     }
 
@@ -94,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let ch = Character.load(id) else { old.say("找不到 \(Character.title(id)) 的精灵图。", duration: 3); return }
         let at = old.feet
         let i = pets.firstIndex { $0 === old } ?? 0
-        for src in ["claude", "codex"] where Prefs.role(src) == old.ch.id { Prefs.setRole(src, id) }
+        for src in Agents.ids where Prefs.role(src) == old.ch.id { Prefs.setRole(src, id) }
         old.teardown()
         let p = Pet(ch: ch, music: music)
         p.peers = { [weak self] in self?.pets ?? [] }
@@ -114,17 +155,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Prefs.setRole(src, id)
         brain.clear()
         afterRoster()
-        if let p = petFor(src), (src == "claude" ? Prefs.huskClaude : Prefs.huskCodex) {
+        if let p = petFor(src), Prefs.husk(src) {
             p.play(.wave)
-            p.say("我来当 \(src == "codex" ? "Codex" : "Claude Code") 的化身！", tag: src == "codex" ? "CODEX" : "CLAUDE CODE", duration: 3)
+            p.say("我来当 \(Agents.name(src)) 的化身！", tag: Agents.tag(src), duration: 3)
         }
     }
 
     private func afterRoster() {
         brain.resync()
         for p in pets { p.roles = [] }
-        if Prefs.huskClaude { petFor("claude")?.roles.append("Claude Code") }
-        if Prefs.huskCodex { petFor("codex")?.roles.append("Codex") }
+        for src in Agents.on { petFor(src)?.roles.append(Agents.name(src)) }
         status?.button?.image = rosterIcon()
     }
 
@@ -189,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else if music.active { musicLine = "  ♪ \(music.playerName) 有声音（不是音乐 App，等节拍稳定）" }
         else { musicLine = "  ♪ 没在放歌" }
         m.addItem(item(musicLine, nil))
-        if Prefs.huskClaude || Prefs.huskCodex { m.addItem(item("  ⌘ 化身：\(brain.summary)", nil)) }
+        if !Agents.on.isEmpty { m.addItem(item("  ⌘ 化身：\(brain.summary)", nil)) }
         m.addItem(.separator())
 
         // Who's on screen.
@@ -206,12 +246,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         m.addItem(who)
 
         // Agents and the pets standing in for them.
-        for (si, src) in ["claude", "codex"].enumerated() {
-            let name = src == "claude" ? "Claude Code" : "Codex"
-            let on = src == "claude" ? Prefs.huskClaude : Prefs.huskCodex
+        for (si, src) in Agents.ids.enumerated() {
+            let name = Agents.name(src)
+            let on = Prefs.husk(src)
             let it = NSMenuItem(title: "\(name) 化身" + (on ? "：\(petFor(src).map { Character.title($0.ch.id) } ?? "")" : "（未接入）"), action: nil, keyEquivalent: "")
             let sm = NSMenu()
-            sm.addItem(item("接入 \(name)（装钩子）", src == "claude" ? #selector(toggleClaude) : #selector(toggleCodex), on: on))
+            let hook = item("接入 \(name)（装钩子）", #selector(toggleHusk(_:)), on: on, tag: si)
+            sm.addItem(hook)
+            sm.addItem(item("  " + HookInstaller.file(src).path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), nil))
             sm.addItem(.separator())
             sm.addItem(item("由谁来当：", nil))
             for id in Character.ids {
@@ -275,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc func pickRole(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        setRole(["claude", "codex"][sender.tag], id)
+        setRole(Agents.ids[sender.tag], id)
     }
     @objc func setSize(_ sender: NSMenuItem) { for p in pets { p.setScale(CGFloat([0.5, 0.62, 0.8, 1.0][sender.tag])) } }
     @objc func toggleWander() { Prefs.wander.toggle() }
@@ -299,8 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleTap() { Prefs.beatTap.toggle(); if !Prefs.beatTap { music.stopTap() } }
     @objc func toggleBrowser() { Prefs.browserMusic.toggle() }
     @objc func toggleChime() { Prefs.chime.toggle() }
-    @objc func toggleClaude() { setHusk("claude", !Prefs.huskClaude) }
-    @objc func toggleCodex() { setHusk("codex", !Prefs.huskCodex) }
+    @objc func toggleHusk(_ sender: NSMenuItem) { let src = Agents.ids[sender.tag]; setHusk(src, !Prefs.husk(src)) }
     @objc func demoDance() { pets[0].forceDance(16) }
     @objc func demoHusk() { brain.demo() }
     @objc func demoTogether() {
@@ -320,11 +361,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let p = petFor(src) ?? focus
         do {
             try HookInstaller.set(src, on: on)
-            if src == "claude" { Prefs.huskClaude = on } else { Prefs.huskCodex = on }
+            Prefs.setHusk(src, on)
             afterRoster()
-            let app = src == "claude" ? "Claude Code" : "Codex"
-            p.say(on ? "好了！重启 \(app) 后，我就是它的分身啦。\(src == "codex" ? "Codex 会问要不要信任这些钩子，选信任。" : "")" : "已经从 \(app) 里拿掉我的钩子。",
-                  tag: src == "claude" ? "CLAUDE CODE" : "CODEX", duration: 6)
+            let app = Agents.name(src)
+            let after = ["claude": "重启 Claude Code 后，我就是它的分身啦。",
+                         "codex": "重启 Codex 后，我就是它的分身啦。Codex 会问要不要信任这些钩子，选信任。",
+                         "cursor": "新开一个 Cursor 对话（编辑器或 cursor-agent）就生效。",
+                         "dsh": "钩子写进 ~/.dsh/hooks.json 了。DSH 还要装一个 hooks 插件来读它，命令在 README 里。"][src] ?? ""
+            p.say(on ? "好了！" + after : "已经从 \(app) 里拿掉我的钩子。", tag: Agents.tag(src), duration: src == "dsh" ? 8 : 6)
         } catch {
             p.say("没设置成功：\(error)", duration: 6)
         }
@@ -398,7 +442,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             d["roles"] = p.roles
             return d
         }
-        s["roles"] = ["claude": petFor("claude")?.ch.id ?? "", "codex": petFor("codex")?.ch.id ?? ""]
+        s["roles"] = Dictionary(uniqueKeysWithValues: Agents.ids.map { ($0, petFor($0)?.ch.id ?? "") })
+        s["hooked"] = Agents.on
         return s
     }
 
