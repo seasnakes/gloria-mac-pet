@@ -31,8 +31,12 @@ enum Desktop {
         CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
     }
 
+    /// Fake windows for recording videos (ctl "stage"): while set, they stand in for every real window.
+    static var staged: [Win]?
+
     /// Normal windows front to back, plus the id order of every on-screen window (ours included).
     static func scan(excluding pid: pid_t) -> (wins: [Win], order: [CGWindowID]) {
+        if let s = staged { return (s, s.map(\.id)) }
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
                 as? [[String: Any]] else { return ([], []) }
         var wins: [Win] = []
@@ -55,6 +59,12 @@ enum Desktop {
 
     static func screen(at p: CGPoint) -> NSScreen? {
         NSScreen.screens.first { $0.frame.contains(p) }
+    }
+
+    /// A screen's name for the menu: 内建显示器 for the laptop's own, else what macOS calls it.
+    static func name(_ s: NSScreen) -> String {
+        if let n = s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber, CGDisplayIsBuiltin(n.uint32Value) != 0 { return "内建显示器" }
+        return s.localizedName
     }
 
     static func nearestScreen(_ p: CGPoint) -> NSScreen? {

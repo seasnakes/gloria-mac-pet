@@ -189,7 +189,7 @@ final class Clone {
 }
 
 final class Pet {
-    enum Mode: String { case perched, walking, held, airborne, hopping }
+    enum Mode: String { case perched, walking, held, airborne, hopping, peeking }
 
     let ch: Character
     var sprites: Sprites { ch.sprites }
@@ -241,6 +241,21 @@ final class Pet {
     private var synthHold: (start: Double, until: Double, center: CGPoint)?
     private var heldSince: Double = 0
 
+    // Peeking: tucked in behind the left (side −1) or right (+1) edge of a screen, only her head out, leaning in.
+    // p is how far out she is (0 hidden, 1 head and a shoulder out).
+    struct Peek {
+        var side: CGFloat, edge: CGFloat, headY: CGFloat
+        var p: CGFloat = 0.95
+        var duckUntil: Double = 0
+        var nearSince: Double?
+        var found = false
+        var fidget: (until: Double, p: CGFloat)?
+        var nextFidget = now() + 5
+    }
+    private(set) var peek: Peek?
+    private let peekTilt: CGFloat = 28
+    private var lastPeekLine: Double = -60
+
     // Dock, cursor chasing, pokes
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
@@ -276,6 +291,8 @@ final class Pet {
     var awaiting: String?
     var awaitingTag = "CLAUDE"
     private var clones: [Clone] = []
+    /// Subagent clones on screen (for the recorder).
+    var cloneBodies: [Body] { clones.map(\.body) }
     private var lastClonePlace: Double = 0
     // Computer use: the pose she holds while an agent clicks / types / snaps through her.
     private var acting: (anim: Anim, start: Double, until: Double, flip: Bool)?
@@ -329,8 +346,11 @@ final class Pet {
             observers.append(ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.dockBounce() })
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.rescan(force: true)
-            if let s = self, Desktop.screen(at: CGPoint(x: s.feet.x, y: s.feet.y + 4)) == nil { s.summon(entrance: false) }
+            guard let s = self else { return }
+            s.rescan(force: true)
+            if let pk = s.peek {
+                if s.edgeFree(side: pk.side, edge: pk.edge, headY: pk.headY) == nil { s.summon(entrance: false) }
+            } else if Desktop.screen(at: CGPoint(x: s.feet.x, y: s.feet.y + 4)) == nil { s.summon(entrance: false) }
         }
     }
 
@@ -343,11 +363,15 @@ final class Pet {
         body.place(feet: feet)
     }
 
-    /// Drop her onto the front window (or the floor) from above.
-    func summon(entrance: Bool, slot: Int = 0) {
+    /// Drop her onto the front window (or the floor) from above — on the screen under the pointer, or the one given.
+    func summon(entrance: Bool, slot: Int = 0, on target: NSScreen? = nil) {
+        peek = nil
         rescan(force: true)
-        let mouse = NSEvent.mouseLocation
-        let scr = Desktop.nearestScreen(mouse) ?? NSScreen.main
+        let cursor = NSEvent.mouseLocation
+        let scr = target ?? Desktop.nearestScreen(cursor) ?? NSScreen.main
+        // Only aim at the pointer when it's on that screen.
+        var mouse = cursor
+        if let f = scr?.frame, !f.contains(cursor) { mouse = CGPoint(x: f.midX, y: f.midY) }
         let onScreen = ledges.filter { l in
             guard let v = scr?.visibleFrame else { return true }
             return l.y >= v.minY && l.y <= v.maxY && l.right > v.minX && l.left < v.maxX
@@ -409,6 +433,7 @@ final class Pet {
     }
 
     func throwHer(vx: CGFloat, vy: CGFloat) {
+        peek = nil
         seat = nil
         hostRect = nil
         mode = .airborne
@@ -421,7 +446,10 @@ final class Pet {
         throwHer(vx: 0, vy: 0)
     }
 
-    var headTop: CGPoint { CGPoint(x: feet.x, y: feet.y + dockLift + (headRise > 0 ? headRise : spriteSize.height * 0.94)) }
+    var headTop: CGPoint {
+        if let pk = peek { let g = headGeo; return CGPoint(x: pk.edge - pk.side * g.r * 0.7, y: pk.headY + g.r) }
+        return CGPoint(x: feet.x, y: feet.y + dockLift + (headRise > 0 ? headRise : spriteSize.height * 0.94))
+    }
     var isAsleep: Bool { asleep }
 
     /// Hold her up in the air for a few seconds as if dragged (for checks and the demo menu).
@@ -432,6 +460,7 @@ final class Pet {
     }
 
     private func startHold() {
+        peek = nil
         mode = .held
         heldSince = now()
         seat = nil
@@ -507,19 +536,43 @@ final class Pet {
             if let a = samples.first, let b = samples.last, b.0 - a.0 > 0.012 {
                 v = CGVector(dx: (b.1.x - a.1.x) / CGFloat(b.0 - a.0), dy: (b.1.y - a.1.y) / CGFloat(b.0 - a.0))
             }
-            let sp = hypot(v.dx, v.dy)
-            if sp > 3200 { v.dx *= 3200 / sp; v.dy *= 3200 / sp }
-            mode = .airborne
-            vel = v
-            if sp > 1400 { say(["哇啊啊——", "飞起来了！", "轻点轻点！"].randomElement()!, duration: 1.6) }
+            release(at: NSEvent.mouseLocation, velocity: v)
             return
         }
+        if e.clickCount >= 2 && peek != nil { leavePeek(); return }
         if e.clickCount >= 2 {
             play(.jump)
             sparkle("✦", color: Palette.periwinkle, count: 2)
         } else {
             pat()
         }
+    }
+
+    /// Let go of her at the pointer: she flies off with the throw, or, let go against a screen's side edge, tucks in
+    /// behind it and peeks out.
+    func release(at m: CGPoint, velocity: CGVector) {
+        var v = velocity
+        let sp = hypot(v.dx, v.dy)
+        if sp > 3200 { v.dx *= 3200 / sp; v.dy *= 3200 / sp }
+        if Prefs.edgePeek, sp < 1800, let scr = Desktop.screen(at: m) {
+            let f = scr.frame, zone = max(34, bodyHalf * scale * 0.7)
+            let side: CGFloat? = m.x - f.minX < zone ? -1 : (f.maxX - m.x < zone ? 1 : nil)
+            if let side, let s = edgeFree(side: side, edge: side > 0 ? f.maxX : f.minX, headY: feet.y + headGeo.hc) {
+                startPeek(side: side, screen: s, headY: feet.y + headGeo.hc)
+                return
+            }
+        }
+        mode = .airborne
+        vel = v
+        if sp > 1400 { say(["哇啊啊——", "飞起来了！", "轻点轻点！"].randomElement()!, duration: 1.6) }
+    }
+
+    /// For checks: as if she'd been carried to `m` and let go there.
+    func drop(at m: CGPoint, velocity v: CGVector) {
+        startHold()
+        feet = heldFeet(m, heldSince + 1)
+        release(at: m, velocity: v)
+        if mode == .held { mode = .airborne }
     }
 
     func rightClick(_ e: NSEvent, in v: NSView) { onMenu?(e, v) }
@@ -554,6 +607,7 @@ final class Pet {
         let t = now()
         let dt = CGFloat(clamp(t - lastTick, 0, 0.05))
         lastTick = t
+        if peek != nil && mode != .peeking { peek = nil }
         if t - lastScan > (mode == .perched || mode == .walking ? 1.0 / 15 : 1.0 / 30) { rescan(force: false); lastScan = t }
 
         if mode == .walking && (awaiting != nil || music.dancing) { mode = .perched }
@@ -572,6 +626,7 @@ final class Pet {
         case .hopping: hopStep(t)
         case .walking: walkStep(dt)
         case .perched: break
+        case .peeking: peekStep(t, dt)
         }
         if mode == .perched || mode == .walking { holdSeat(t) }
 
@@ -603,12 +658,16 @@ final class Pet {
         vel.dx *= pow(0.7, dt)
         var next = CGPoint(x: feet.x + vel.dx * dt, y: feet.y + vel.dy * dt)
         let half = spriteSize.width * 0.3
-        let all = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }
-        if next.x < all.minX + half { next.x = all.minX + half; vel.dx = abs(vel.dx) * 0.45 }
-        if next.x > all.maxX - half { next.x = all.maxX - half; vel.dx = -abs(vel.dx) * 0.45 }
-        if let scr = Desktop.nearestScreen(CGPoint(x: next.x, y: max(next.y, 0))) {
-            let f = scr.frame
-            if next.y + spriteSize.height > f.maxY { next.y = f.maxY - spriteSize.height; vel.dy = -abs(vel.dy) * 0.3 }
+        // Walls and ceiling are the edges of the screen she's in — except where another screen carries on past them,
+        // so she can be thrown from one display onto the next.
+        let here = Desktop.screen(at: feet) ?? Desktop.nearestScreen(feet)
+        if let f = here?.frame {
+            let mid = next.y + spriteSize.height * 0.5
+            if next.x < f.minX + half, Desktop.screen(at: CGPoint(x: f.minX - 2, y: mid)) == nil { next.x = f.minX + half; vel.dx = abs(vel.dx) * 0.45 }
+            if next.x > f.maxX - half, Desktop.screen(at: CGPoint(x: f.maxX + 2, y: mid)) == nil { next.x = f.maxX - half; vel.dx = -abs(vel.dx) * 0.45 }
+            if next.y + spriteSize.height > f.maxY, Desktop.screen(at: CGPoint(x: next.x, y: f.maxY + 2)) == nil {
+                next.y = f.maxY - spriteSize.height; vel.dy = -abs(vel.dy) * 0.3
+            }
         }
         if vel.dy <= 0 {
             var best: Ledge?
@@ -621,8 +680,10 @@ final class Pet {
                 land(on: l, impact: impact)
                 return
             }
-            // Safety net: never fall past the bottom of every screen.
-            if let floor = ledges.filter({ $0.isFloor && next.x >= $0.left - 1 && next.x <= $0.right + 1 }).max(by: { $0.y < $1.y }), next.y < floor.y - 2 {
+            // Safety net: never fall out of the bottom of the screen she's in. (Not the highest floor at this x: with a
+            // display stacked above this one, that's the other display's bottom edge, and she'd be snapped up there.)
+            if let scr = here, next.y < scr.visibleFrame.minY - 2 {
+                let floor = Ledge(win: nil, left: scr.visibleFrame.minX, right: scr.visibleFrame.maxX, y: scr.visibleFrame.minY)
                 feet = CGPoint(x: next.x, y: floor.y)
                 land(on: floor, impact: -vel.dy)
                 return
@@ -759,6 +820,7 @@ final class Pet {
 
     /// Stand in the window stack just above her window, so windows in front of it can cover her.
     private func keepAbove(_ host: CGWindowID) {
+        if Desktop.staged != nil { body.panel.level = .floating; return }
         let me = CGWindowID(body.panel.windowNumber)
         guard let hi = order.firstIndex(of: host) else { return }
         let mi = order.firstIndex(of: me)
@@ -772,7 +834,7 @@ final class Pet {
     }
 
     private func updateLevel() {
-        if seat?.win == nil {
+        if seat?.win == nil || Desktop.staged != nil {
             body.panel.level = .floating
             for c in clones { c.body.panel.level = .floating }
         } else if let id = seat?.win {
@@ -941,7 +1003,10 @@ final class Pet {
     }
 
     /// Where a note leaves her hands / lands on her chest.
-    var hands: CGPoint { CGPoint(x: feet.x, y: feet.y + dockLift + spriteSize.height * 0.5) }
+    var hands: CGPoint {
+        if let pk = peek { let g = headGeo; return CGPoint(x: pk.edge - pk.side * g.r * 0.6, y: pk.headY - g.r * 0.4) }
+        return CGPoint(x: feet.x, y: feet.y + dockLift + spriteSize.height * 0.5)
+    }
 
     /// Walk over to another pet when they share a ledge, then throw her a note.
     func passNote(to o: Pet, say text: String?, tag: String?, note: String?, noteTag: String?) {
@@ -1090,18 +1155,17 @@ final class Pet {
         case .walking:
             cell = ch.cell(walkTarget > feet.x ? .runRight : .runLeft, Int(t / ch.frameTime(.runRight)))
             lift = CGFloat(abs(sin(t * 14))) * 2 * k
+        case .peeking:
+            // Leaning in from behind the edge; a slow sway so she looks alive.
+            targetRot = (peek?.side ?? 1) * peekTilt + CGFloat(sin(t * 1.6)) * 2.5
+            if let (c, l) = shotFrame(t, k) { cell = c; lift = l * 0.5 }
+            else if awaiting != nil { cell = ch.cell(.waiting, Int(t / ch.frameTime(.waiting))) }
+            else if let a = acting, t < a.until { cell = ch.cell(a.anim, ch.index(a.anim, at: t - a.start)) }
+            else if working { cell = ch.cell(.work, ch.index(.work, at: t - workSince)) }
+            else if let look = peekLook() { cell = look }
+            else { cell = idleCell(t) }
         case .perched:
-            if let s = shot {
-                let ft = ch.frameTime(s.anim)
-                let seq = s.cells ?? Array(0..<ch.count(s.anim))
-                let i = Int((t - s.start) / ft)
-                if i >= seq.count * s.loops { shot = nil; idleStart = t } else { cell = ch.cell(s.anim, seq[i % seq.count]) }
-                if s.anim == .jump && s.cells == nil, i < seq.count {
-                    // A little hop in place for the jump reaction.
-                    let u = (t - s.start) / (ft * Double(seq.count))
-                    lift = CGFloat(max(0, sin(u * .pi))) * 16 * k
-                }
-            }
+            if let (c, l) = shotFrame(t, k) { cell = c; lift = l }
             if shot == nil {
                 if let _ = awaiting {
                     cell = ch.cell(.waiting, Int(t / ch.frameTime(.waiting)))
@@ -1177,6 +1241,22 @@ final class Pet {
         display(body, cell, dt)
         body.pose(rot: rot, sx: sx, sy: sy, dx: dx, lift: lift, alpha: alpha)
         CATransaction.commit()
+    }
+
+    /// The frame of the reaction playing now (nil once it's over), and how high its little hop goes.
+    private func shotFrame(_ t: Double, _ k: CGFloat) -> (Cell, CGFloat)? {
+        guard let s = shot else { return nil }
+        let ft = ch.frameTime(s.anim)
+        let seq = s.cells ?? Array(0..<ch.count(s.anim))
+        let i = Int((t - s.start) / ft)
+        if i >= seq.count * s.loops { shot = nil; idleStart = t; return nil }
+        var lift: CGFloat = 0
+        if s.anim == .jump && s.cells == nil, i < seq.count {
+            // A little hop in place for the jump reaction.
+            let u = (t - s.start) / (ft * Double(seq.count))
+            lift = CGFloat(max(0, sin(u * .pi))) * 16 * k
+        }
+        return (ch.cell(s.anim, seq[i % seq.count]), lift)
     }
 
     /// Put a frame on a body: a sheet cell, or for a 3D pet the pose that cell stands for.
@@ -1335,6 +1415,143 @@ final class Pet {
         }
     }
 
+    // MARK: Peeking from a screen edge
+
+    /// Her face relative to her feet, upright (dx sideways, hc up), and its radius, in points: from "face" in her JSON,
+    /// else guessed from the resting frame (the head is the part between the grab point and the top of the drawing).
+    private var headGeo: (dx: CGFloat, hc: CGFloat, r: CGFloat) {
+        if let f = ch.face { return ((f.x - Sprites.footX) * scale, (ch.feetY - f.y) * scale, f.r * scale) }
+        var rise = (ch.feetY - CGFloat(sprites.top(ch.cell(.idle, 0)))) * scale
+        if rise < spriteSize.height * 0.3 { rise = spriteSize.height * 0.8 }
+        let neck = clamp(ch.hang * scale, rise * 0.35, rise * 0.8)
+        let r = max((rise - neck) / 2, spriteSize.width * 0.12)
+        return (0, rise - r, r)
+    }
+
+    /// Her face's offset from her feet with the sprite turned `deg` degrees (counter-clockwise positive).
+    private func faceOffset(_ deg: CGFloat) -> CGVector {
+        let g = headGeo, r = deg * .pi / 180
+        return CGVector(dx: g.dx * cos(r) - g.hc * sin(r), dy: g.dx * sin(r) + g.hc * cos(r))
+    }
+
+    /// Where her face is right now (follows the tilt as it eases in).
+    private var peekHead: CGPoint {
+        let o = faceOffset(rot)
+        return CGPoint(x: feet.x + o.dx, y: feet.y + o.dy)
+    }
+
+    /// The screen she's on (for the menu): the one whose edge she peeks from, else the one under her feet.
+    var screen: NSScreen? {
+        if let pk = peek { return Desktop.nearestScreen(CGPoint(x: pk.edge - pk.side * 4, y: pk.headY)) }
+        return Desktop.nearestScreen(CGPoint(x: feet.x, y: feet.y + 4))
+    }
+
+    /// The screen whose left/right edge this is, if nothing carries on past it where her body would hide.
+    func edgeFree(side: CGFloat, edge: CGFloat, headY: CGFloat) -> NSScreen? {
+        guard let scr = Desktop.screen(at: CGPoint(x: edge - side * 4, y: headY)) ?? Desktop.nearestScreen(CGPoint(x: edge - side * 4, y: headY)),
+              abs((side > 0 ? scr.frame.maxX : scr.frame.minX) - edge) < 1 else { return nil }
+        let g = headGeo
+        let y = clamp(headY, scr.visibleFrame.minY + g.r + 10, scr.visibleFrame.maxY - g.r - 10)
+        let w = spriteSize.width * 1.2
+        let hide = CGRect(x: side > 0 ? edge : edge - w, y: y - g.hc - 10, width: w, height: g.hc + g.r + 20)
+        return NSScreen.screens.contains { $0 != scr && $0.frame.intersects(hide) } ? nil : scr
+    }
+
+    /// Tuck in behind a side edge of `screen` with her head at about `headY`, and peek out.
+    func startPeek(side: CGFloat, screen scr: NSScreen, headY: CGFloat, quiet: Bool = false) {
+        let g = headGeo, v = scr.visibleFrame
+        let edge = side > 0 ? scr.frame.maxX : scr.frame.minX
+        peek = Peek(side: side, edge: edge, headY: clamp(headY, v.minY + g.r + 10, v.maxY - g.r - 10))
+        seat = nil; hostRect = nil; hop = nil; chasing = false
+        vel = .zero
+        mode = .peeking
+        wake(quiet: true)
+        body.panel.level = .floating
+        body.panel.orderFrontRegardless()
+        if !quiet && now() - lastPeekLine > 20 && Int.random(in: 0..<2) == 0 {
+            lastPeekLine = now()
+            say(["躲好了～", "嘘……", "从这里偷偷看你"].randomElement()!, duration: 2)
+        }
+    }
+
+    /// Peek from the nearer side edge of the screen she's on (the other one if that side runs on into another screen).
+    /// `slot` spreads several pets: odd slots take the far edge, and each pair sits a little lower.
+    func peekAtEdge(slot: Int = 0) {
+        guard let scr = screen else { return }
+        let g = headGeo
+        let near: CGFloat = feet.x > scr.frame.midX ? 1 : -1
+        let order = slot % 2 == 0 ? [near, -near] : [-near, near]
+        let y = (peek?.headY ?? feet.y + g.hc) - CGFloat(slot / 2) * g.r * 3.2
+        for side in order {
+            if let s = edgeFree(side: side, edge: side > 0 ? scr.frame.maxX : scr.frame.minX, headY: y) {
+                startPeek(side: side, screen: s, headY: max(y, s.visibleFrame.minY + spriteSize.height * 0.6))
+                return
+            }
+        }
+        say("这块屏幕两边都连着别的屏幕，没地方躲～", duration: 2.4)
+    }
+
+    /// Hop out from behind the edge back onto the desktop.
+    func leavePeek() {
+        guard let pk = peek else { return }
+        let g = headGeo
+        feet = CGPoint(x: pk.edge - pk.side * spriteSize.width * 0.45, y: pk.headY - g.hc)
+        throwHer(vx: -pk.side * 380, vy: 560)
+    }
+
+    private func peekStep(_ t: Double, _ dt: CGFloat) {
+        guard var pk = peek else { mode = .airborne; return }
+        let g = headGeo
+        let m = pointer()
+        let head = CGPoint(x: pk.edge - pk.side * g.r * 0.4, y: pk.headY)
+        let d = hypot(m.x - head.x, m.y - head.y)
+        let reach = g.r * 4 + 90
+        let over = body.hits(m, sprites)
+        var want: CGFloat = 0.68
+        if shot != nil || awaiting != nil || working || (bubble.visible && !bubble.text.isEmpty) || isActing {
+            want = 1                                   // something to show or say: lean right out
+        } else {
+            // The pointer rushing at her: duck back behind the edge, leaving a tuft of hair out.
+            if d < reach && mouseSpeed > 280 && !over { pk.duckUntil = t + 1.2; pk.found = false }
+            // The pointer resting near her (or on her): found out, so she leans out a little sheepishly.
+            if (d < reach * 0.8 && mouseSpeed < 70) || over { if pk.nearSince == nil { pk.nearSince = t } } else { pk.nearSince = nil }
+            let found = over || (pk.nearSince.map { t - $0 > 0.8 } ?? false)
+            if found && !pk.found && t > pk.duckUntil && t - lastPeekLine > 25 && Int.random(in: 0..<3) == 0 {
+                lastPeekLine = t
+                say(["被发现了……", "嘿嘿", "我只是路过～"].randomElement()!, duration: 1.8)
+            }
+            pk.found = found
+            if t < pk.duckUntil { want = 0.2 }
+            else if found { want = 0.95 }
+            else {
+                // Now and then: duck and come back, or lean out for a better look.
+                if pk.fidget == nil && t > pk.nextFidget {
+                    pk.fidget = Bool.random() ? (t + 0.9, 0.3) : (t + 1.6, 0.88)
+                    pk.nextFidget = t + Double.random(in: 5...11)
+                }
+                if let f = pk.fidget { if t < f.until { want = f.p } else { pk.fidget = nil } }
+            }
+        }
+        // Ducks fast, comes back out slowly.
+        let rate: CGFloat = want < pk.p ? 12 : 2.4
+        pk.p += (want - pk.p) * min(1, rate * dt)
+        peek = pk
+        // The face's spot across the edge, then her feet from the current tilt (so it holds while the tilt eases in).
+        let inside = lerp(-g.r - 6, g.r * 1.05, pk.p)
+        let o = faceOffset(rot)
+        feet = CGPoint(x: pk.edge - pk.side * inside - o.dx, y: pk.headY - o.dy)
+    }
+
+    /// Eyes on the pointer while she peeks — the look frames are drawn upright, so take off her tilt.
+    private func peekLook() -> Cell? {
+        guard let pk = peek else { return nil }
+        let m = pointer(), h = peekHead
+        var world = atan2(Double(m.x - h.x), Double(m.y - h.y)) * 180 / .pi
+        if hypot(m.x - h.x, m.y - h.y) > 900 { world = pk.side > 0 ? 270 : 90 }   // far away: look into the screen
+        lookDeg = world + Double(rot)
+        return sprites.look(lookDeg)
+    }
+
     // MARK: Status (for the menu and the control socket)
 
     func status() -> [String: Any] {
@@ -1342,6 +1559,8 @@ final class Pet {
         let s = music.tracker.snapshot()
         return [
             "mode": mode.rawValue,
+            "peek": peek.map { ["side": Double($0.side), "edge": Double($0.edge), "headY": Double($0.headY), "out": Double($0.p)] } ?? [:],
+            "screen": NSScreen.screens.firstIndex { $0 == screen } ?? -1,
             "feet": [Double(feet.x), Double(feet.y)],
             "seatWindow": seat?.win.map { Int($0) } ?? 0,
             "seatOwner": seat?.win.flatMap { id in wins.first { $0.id == id }?.owner } ?? (seat == nil ? "" : "floor"),

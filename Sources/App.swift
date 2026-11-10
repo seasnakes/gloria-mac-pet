@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let brain = HuskBrain()
     let server = HuskServer()
     var status: NSStatusItem!
+    /// While recording a video take, real hook events are ignored (scripted `event` commands still play).
+    var muteHooks = false
     /// The pet whose menu is open (right-click on her); nil for the menu bar icon, which speaks for everyone.
     private weak var menuPet: Pet?
 
@@ -30,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        server.onEvent = { [weak self] e in self?.brain.handle(e) }
+        server.onEvent = { [weak self] e in if self?.muteHooks != true { self?.brain.handle(e) } }
         server.onControl = { [weak self] m in self?.control(m) ?? [:] }
         server.start()
 
@@ -64,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         box.alignment = .leading
         var checks: [(String, NSButton)] = []
         for info in found {
-            let note = ["codex": "（之后 Codex 会问一次要不要信任钩子）", "dsh": "（DSH 还要装 hooks 插件，见 README）"][info.id] ?? ""
+            let note = ["codex": "（之后 Codex 会问一次要不要信任钩子）", "dsh": "（还要给它装 hooks 插件，见 README）"][info.id] ?? ""
             let c = NSButton(checkboxWithTitle: info.name + note, target: nil, action: nil)
             c.state = .on
             box.addArrangedSubview(c)
@@ -208,10 +210,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func where_(_ p: Pet) -> String {
         let s = p.status()
         switch s["mode"] as? String {
-        case "perched", "walking": return (s["seatOwner"] as? String) == "floor" ? "站在屏幕底部" : "站在「\(s["seatOwner"] as? String ?? "")」的窗口上"
+        case "perched", "walking": return ((s["seatOwner"] as? String) == "floor" ? "站在屏幕底部" : "站在「\(s["seatOwner"] as? String ?? "")」的窗口上") + screenNote(p)
         case "held": return "被你拎着"
+        case "peeking": return "躲在屏幕\(((s["peek"] as? [String: Double])?["side"] ?? 1) > 0 ? "右" : "左")边偷看" + screenNote(p)
         default: return "在空中"
         }
+    }
+
+    /// "（外接显示器 P275MV）" when there's more than one screen.
+    private func screenNote(_ p: Pet) -> String {
+        guard NSScreen.screens.count > 1, let s = p.screen else { return "" }
+        return "（\(Desktop.name(s))）"
     }
 
     func buildMenu(for pet: Pet?) -> NSMenu {
@@ -269,6 +278,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         m.addItem(item(pet == nil && pets.count > 1 ? "叫她们过来" : "叫她过来", #selector(summon)))
         if let pet, pets.count > 1 { m.addItem(item("让 \(pet.ch.name) 先休息（隐藏）", #selector(hideThis))) }
+        if NSScreen.screens.count > 1 {
+            let mv = NSMenuItem(title: pet == nil && pets.count > 1 ? "移到显示器（全部）" : "移到显示器", action: nil, keyEquivalent: "")
+            let ms = NSMenu()
+            let who = pet.map { [$0] } ?? pets
+            for (i, s) in NSScreen.screens.enumerated() {
+                let here = who.allSatisfy { $0.screen == s }
+                ms.addItem(item(Desktop.name(s) + (i == 0 ? "（主显示器）" : ""), #selector(moveToScreen(_:)), on: here, tag: i))
+            }
+            mv.submenu = ms
+            m.addItem(mv)
+        }
+        m.addItem(item(pet == nil && pets.count > 1 ? "都躲到屏幕边上偷看" : "躲到屏幕边上偷看", #selector(peekEdge)))
         let size = NSMenuItem(title: "大小", action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for (i, (name, v)) in [("小", 0.5), ("中", 0.62), ("大", 0.8), ("特大", 1.0)].enumerated() {
@@ -279,6 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         m.addItem(item("自己溜达", #selector(toggleWander), on: Prefs.wander))
         m.addItem(item("闲着会打盹（3 分钟没操作）", #selector(toggleNap), on: Prefs.nap))
         m.addItem(item("追光标", #selector(toggleChase), on: Prefs.chase))
+        m.addItem(item("拖到屏幕左右边缘会躲起来探头", #selector(toggleEdgePeek), on: Prefs.edgePeek))
         m.addItem(item("登录时启动", #selector(toggleLogin), on: SMAppService.mainApp.status == .enabled))
         m.addItem(.separator())
 
@@ -310,6 +332,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let p = menuPet { p.summon(entrance: false); return }
         for (i, p) in pets.enumerated() { p.summon(entrance: false, slot: i) }
     }
+    @objc func moveToScreen(_ sender: NSMenuItem) {
+        guard sender.tag < NSScreen.screens.count else { return }
+        let s = NSScreen.screens[sender.tag]
+        if let p = menuPet { p.summon(entrance: false, on: s); return }
+        for (i, p) in pets.enumerated() { p.summon(entrance: false, slot: i, on: s) }
+    }
+    @objc func peekEdge() {
+        if let p = menuPet { p.peekAtEdge(); return }
+        for (i, p) in pets.enumerated() { p.peekAtEdge(slot: i) }
+    }
+    @objc func toggleEdgePeek() { Prefs.edgePeek.toggle() }
     @objc func hideThis() { if let p = menuPet { setShown(p.ch.id, false) } }
     @objc func toggleShown(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
@@ -367,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let after = ["claude": "重启 Claude Code 后，我就是它的分身啦。",
                          "codex": "重启 Codex 后，我就是它的分身啦。Codex 会问要不要信任这些钩子，选信任。",
                          "cursor": "新开一个 Cursor 对话（编辑器或 cursor-agent）就生效。",
-                         "dsh": "钩子写进 ~/.dsh/hooks.json 了。DSH 还要装一个 hooks 插件来读它，命令在 README 里。"][src] ?? ""
+                         "dsh": "钩子写进 ~/.dsh/hooks.json 了。DeepSeek Harness 还要装一个 hooks 插件来读它，命令在 README 里。"][src] ?? ""
             p.say(on ? "好了！" + after : "已经从 \(app) 里拿掉我的钩子。", tag: Agents.tag(src), duration: src == "dsh" ? 8 : 6)
         } catch {
             p.say("没设置成功：\(error)", duration: 6)
@@ -393,6 +426,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "together": brain.demoTogether()
         case "cua": brain.demoComputerUse()
         case "hold": pet.simulateHold(num("seconds", 3))
+        case "drop": pet.drop(at: CGPoint(x: num("x", 500), y: num("y", 600)), velocity: CGVector(dx: num("vx", 0), dy: num("vy", 0)))
+        case "screen":
+            let i = Int(num("index", 0))
+            if i >= 0 && i < NSScreen.screens.count {
+                if m["pet"] == nil { for (k, p) in pets.enumerated() { p.summon(entrance: false, slot: k, on: NSScreen.screens[i]) } }
+                else { pet.summon(entrance: false, on: NSScreen.screens[i]) }
+            }
+        case "peek":
+            if let side = m["side"] as? String, side != "auto", let scr = pet.screen {
+                let sd: CGFloat = side == "left" ? -1 : 1
+                if let s = pet.edgeFree(side: sd, edge: sd > 0 ? scr.frame.maxX : scr.frame.minX, headY: CGFloat(num("y", Double(scr.visibleFrame.midY)))) {
+                    pet.startPeek(side: sd, screen: s, headY: CGFloat(num("y", Double(scr.visibleFrame.midY))), quiet: true)
+                }
+            } else { pet.peekAtEdge() }
+        case "unpeek": pet.leavePeek()
         case "character": replace(pet, with: m["id"] as? String ?? "gloria")
         case "show": setShown(m["id"] as? String ?? "", (m["on"] as? Bool) ?? true)
         case "role": setRole(m["source"] as? String ?? "claude", m["id"] as? String ?? pet.ch.id)
@@ -430,6 +478,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
             return ["items": titles(buildMenu(for: m["pet"] == nil ? nil : pet), 0)]
+        case "mute":
+            muteHooks = (m["on"] as? Bool) ?? true
+            return ["muted": muteHooks]
+        case "pref":
+            // {"ctl":"pref","key":"dance|chase|wander|nap|chime","on":false} — the same switches as the menu.
+            if let k = m["key"] as? String, ["dance", "chase", "wander", "nap", "chime", "beatTap", "browserMusic"].contains(k) {
+                UserDefaults.standard.set((m["on"] as? Bool) ?? true, forKey: k)
+            }
+            return ["dance": Prefs.dance, "chase": Prefs.chase, "wander": Prefs.wander, "nap": Prefs.nap]
+        case "stage":
+            if (m["off"] as? Bool) == true { Desktop.staged = nil }
+            else if let ws = m["wins"] as? [[String: Any]] {
+                let running = NSWorkspace.shared.runningApplications
+                Desktop.staged = ws.enumerated().compactMap { k, w in
+                    guard let r = w["rect"] as? [NSNumber], r.count == 4 else { return nil }
+                    let owner = w["owner"] as? String ?? "App"
+                    let app = w["app"] as? String
+                    let pid = running.first { $0.localizedName == owner || (app != nil && $0.bundleIdentifier == app) }?.processIdentifier ?? getpid()
+                    return Win(id: CGWindowID((w["id"] as? NSNumber)?.intValue ?? 900 + k), pid: pid, owner: owner,
+                               rect: CGRect(x: r[0].doubleValue, y: r[1].doubleValue, width: r[2].doubleValue, height: r[3].doubleValue))
+                }
+            }
+            return ["staged": (Desktop.staged ?? []).map { ["id": Int($0.id), "owner": $0.owner, "pid": Int($0.pid)] }]
+        case "record":
+            if (m["stop"] as? Bool) == true { Recorder.active?.stop(); return ["stopped": true] }
+            if let r = Recorder.active { return r.status }
+            guard let path = m["path"] as? String,
+                  let r = Recorder(dir: URL(fileURLWithPath: path), seconds: num("seconds", 10), fps: num("fps", 30),
+                                   scale: CGFloat(num("scale", 2)), pets: { [weak self] in self?.pets ?? [] }) else { return ["error": "bad path"] }
+            Recorder.active = r
+            return r.status
         case "scene":
             if let path = m["path"] as? String { scene(path: path, scale: CGFloat(num("scale", 0.5))) }
         default: break

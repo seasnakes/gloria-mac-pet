@@ -47,6 +47,8 @@ enum Prefs {
     static var wander: Bool { get { bool("wander", true) } set { d.set(newValue, forKey: "wander") } }
     static var nap: Bool { get { bool("nap", true) } set { d.set(newValue, forKey: "nap") } }
     static var chase: Bool { get { bool("chase", true) } set { d.set(newValue, forKey: "chase") } }
+    /// Let go against a screen's side edge, she tucks in behind it and peeks out.
+    static var edgePeek: Bool { get { bool("edgePeek", true) } set { d.set(newValue, forKey: "edgePeek") } }
     /// Characters on screen, in order. (Older versions kept a single "character".)
     static var shown: [String] {
         get {
@@ -71,7 +73,7 @@ enum Agents {
         Info(id: "claude", name: "Claude Code", tag: "CLAUDE CODE", home: ".claude"),
         Info(id: "codex", name: "Codex", tag: "CODEX", home: ".codex"),
         Info(id: "cursor", name: "Cursor", tag: "CURSOR", home: ".cursor"),
-        Info(id: "dsh", name: "DSH", tag: "DSH", home: ".dsh"),
+        Info(id: "dsh", name: "DeepSeek Harness", tag: "DSH", home: ".dsh"),
     ]
     static let ids = all.map(\.id)
     static func info(_ id: String) -> Info { all.first { $0.id == id } ?? all[0] }

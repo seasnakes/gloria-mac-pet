@@ -10,7 +10,7 @@
 <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-b9a7f0?style=flat-square" alt="Apple Silicon + Intel">
 <img src="https://img.shields.io/badge/Swift-AppKit%20%2B%20SceneKit-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
 <a href="https://github.com/seasnakes/gloria-mac-pet/releases/latest"><img src="https://img.shields.io/badge/下载-DMG-7fd3f5?style=flat-square" alt="下载 DMG"></a>
-<img src="https://img.shields.io/badge/version-0.7.0-7fd3f5?style=flat-square" alt="v0.7.0">
+<img src="https://img.shields.io/badge/version-0.8.0-7fd3f5?style=flat-square" alt="v0.8.0">
 <img src="https://img.shields.io/badge/联网-不需要-8fd19e?style=flat-square" alt="不联网">
 <a href="LICENSE"><img src="https://img.shields.io/badge/代码-MIT-f7c873?style=flat-square" alt="代码 MIT"></a><br>
 <a href="#四个-agent-的化身"><img src="https://img.shields.io/badge/Claude%20Code-化身-D97757?style=flat-square&logo=claude&logoColor=white" alt="Claude Code 化身"></a>
@@ -126,7 +126,8 @@ Agent 操作电脑时，它的化身会跑到那个窗口上跟着比划。
 平时不忙的时候，她们就在桌面上自己待着：
 
 - 坐在窗口顶边，窗口移动就跟着走，窗口关掉就掉下去，被别的窗口挡住会自己跳上来。落到 Dock 和屏幕底部时改成站姿。
-- 揪着后颈拎起来会手脚乱扑腾；松手后按甩出去的速度飞走，撞墙会反弹，摔重了还会晕一会儿。
+- 揪着后颈拎起来会手脚乱扑腾；松手后按甩出去的速度飞走，撞墙会反弹，摔重了还会晕一会儿。有多块显示器时可以直接拖到另一块屏幕上，扔得够高也能飞过去；菜单里的「移到显示器」可以一键换屏。
+- 拖到屏幕左右边缘松手，她会贴边躲到屏幕外面，只歪着探出半个脑袋，眼睛跟着光标转。光标冲过来她就缩回去，只留一撮头发；光标停在旁边久了，她就知道被发现了，探出来多一点。有话要说或者 agent 等批准时会整个探出来。双击把她叫出来，也可以直接拖走。
 - 音乐 App 一出声就开始跳，一拍一个舞步。给了“系统录音”权限就能跟上真实节拍，声音只在内存里分析。
 - 光标在她站的地方晃，她会跑到光标旁边扑一下，不会钻到光标底下挡住点击。连戳 5 下会生气。
 - 站在 Dock 上时，放大的图标会把她顶起来；有 App 启动、图标弹跳时，她也跟着蹦。
@@ -160,8 +161,8 @@ make dmg        # = bash build.sh --dmg：做出 dist/GLORIA-<版本>.dmg（arm6
 <summary><b>菜单一览</b></summary>
 
 - 角色：勾选谁出场，可以多选（导入的 dsh-pet 宠物也在这里）
-- Claude Code 化身 / Codex 化身 / Cursor 化身 / DSH 化身：接入（装钩子）、由谁来当
-- 需要批准时提示音 · 叫她们过来 · 大小 · 自己溜达 · 闲着会打盹 · 追光标 · 登录时启动
+- Claude Code 化身 / Codex 化身 / Cursor 化身 / DeepSeek Harness 化身：接入（装钩子）、由谁来当
+- 需要批准时提示音 · 叫她们过来 · 移到显示器（有多块屏幕时） · 躲到屏幕边上偷看 · 大小 · 自己溜达 · 闲着会打盹 · 追光标 · 拖到屏幕左右边缘会躲起来探头 · 登录时启动
 - 随音乐跳舞 · 跟着节拍 · 浏览器里的音乐也跳
 - 演示：跳舞 16 秒 / Claude Code 一轮工作 / Claude 请 Codex 帮忙 / Codex 操作电脑 / 被扔出去 / 被拎起来晃一晃 / 打个盹 10 秒
 
@@ -252,7 +253,7 @@ make app
 - Dock 放大的抬升是按放大曲线估算的，不读取 Dock 里真实的图标位置（那需要辅助功能权限）。
 - 窗口顶边离菜单栏太近时放不下她们，这时她们会站在屏幕底部。
 - GrokBot 是实时 3D 渲染，放出来时 App 大约多用 5–8% 的 CPU（每秒最多画 30 帧，过渡靠插值）。
-- 多显示器按逻辑支持，只在一台外接屏上试过。
+- 多显示器：在一台叠在 MacBook 上方的外接屏上试过（拖过去、扔过去、换屏、两块屏的四条边探头）。旁边连着另一块屏幕的那条边不能探头，因为她藏起来的身子会露到那块屏幕上。
 
 </details>
 

@@ -54,6 +54,12 @@ final class Character {
 
     /// How far the seat line sits above the feet line, in cell px.
     var seatRise: CGFloat { feetY - seatY }
+    /// The middle of her face and its radius, in cell px (y from the top) — for peeking out from behind a screen edge.
+    /// From "face": [x, y, r] in her JSON.
+    var face: (x: CGFloat, y: CGFloat, r: CGFloat)? {
+        guard let f = Character.meta(id)?["face"] as? [NSNumber], f.count == 3 else { return nil }
+        return (CGFloat(f[0].doubleValue), CGFloat(f[1].doubleValue), CGFloat(f[2].doubleValue))
+    }
     /// From the feet line up to the grab point, in cell px.
     var hang: CGFloat { feetY - grab.y }
     /// Whether the sheet has the extra rows (perch, dance, sleep, dangle).
@@ -144,7 +150,7 @@ final class Character {
         return nil
     }
 
-    private static func meta(_ id: String) -> [String: Any]? {
+    static func meta(_ id: String) -> [String: Any]? {
         if let m = metaCache[id] { return m }
         guard let f = files(id), let data = try? Data(contentsOf: f.json),
               let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
