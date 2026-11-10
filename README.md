@@ -268,6 +268,12 @@ make app
 | 抽象乌萨奇 | 一张乌萨奇（《ちいかわ》，©ナガノ）毛绒玩偶的照片 | 同人二创，仅供个人非商业使用 |
 | GrokBot | 作者的 Blender 工程，导出为 3D 模型（`grokbot.usdz`） | 机身上的标志是 xAI 的 Grok 标志 |
 
+## 社区致谢
+
+<a href="https://linux.do/"><img src="docs/linux-do.png" width="24" height="24" alt="LINUX DO 社区图标" align="absmiddle"> <strong>LINUX DO</strong></a>
+
+感谢 LINUX DO 社区给独立开发者留了一块分享开源作品的地方，也谢谢来这里试玩 GLORIA、交流桌宠玩法的佬友们。
+
 ## Star History
 
 <a href="https://star-history.com/#seasnakes/gloria-mac-pet&Date">
