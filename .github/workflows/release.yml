@@ -1,57 +1,92 @@
-# A branch run builds both packages. A version tag also publishes them together.
 name: release
-on:
-  push:
-    tags: ["v*"]
-  workflow_dispatch:
+on: workflow_dispatch
 permissions:
+  actions: read
   contents: write
+concurrency:
+  group: publish-gloria-v0.9.0
+  cancel-in-progress: false
 jobs:
-  dmg:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build the DMG
-        run: bash build.sh --dmg
-      - name: Verify the packaged Mac application
-        run: |
-          version=$(cat VERSION)
-          dmg="dist/GLORIA-$version.dmg"
-          hdiutil verify "$dmg"
-          mount_dir=$(mktemp -d)
-          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg"
-          trap 'hdiutil detach "$mount_dir"' EXIT
-          app="$mount_dir/GLORIA.app/Contents"
-          codesign --verify --deep --strict "$mount_dir/GLORIA.app"
-          lipo "$app/MacOS/GLORIA" -verify_arch arm64 x86_64
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")" = "$version"
-          for pet in fourteen grokbot; do test -s "$app/Resources/$pet.usdz"; done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: GLORIA-dmg
-          path: dist/*.dmg
-  windows:
-    uses: ./.github/workflows/windows.yml
-  publish:
-    needs: [dmg, windows]
-    if: startsWith(github.ref, 'refs/tags/')
+  promote:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: seasnakes/gloria-mac-pet
+      CANDIDATE: 0edb7bcc04097e2d09c7afd4846e9d83a2e5f194
+      SOURCE_RUN: '44354806972'
+      TAG: v0.9.0
+      NOTES_BASE64: IyMg5a6J6KOFCgotICoqV2luZG93cyAxMCAvIDExKirvvJrkuIvovb0gYEdMT1JJQS0wLjkuMC1XaW5kb3dzLnppcGDvvIzlrozmlbTop6PljovliLDlm7rlrprmlofku7blpLnvvIzlj4zlh7sgYEdMT1JJQS5leGVg44CC5Lik5LiqIEVYRSDlkowgYGNoYXJhY3RlcnNgIOebruW9lemcgOimgeaUvuWcqOS4gOi1t+OAguWNh+e6p+aXtuWFiOmAgOWHuuato+WcqOi/kOihjOeahOahjOWuoO+8jOWGjeabv+aNoueoi+W6j+aWh+S7tuOAguWBj+WlveS/neWtmOWcqCBgJUxPQ0FMQVBQREFUQSVcR0xPUklBYOOAggotICoqbWFjT1MgMTQuMiDlj4rku6XkuIoqKu+8muS4i+i9vSBgR0xPUklBLTAuOS4wLmRtZ2DvvIzmiZPlvIDlkI7mioogR0xPUklBIOaLluWFpeOAjOW6lOeUqOeoi+W6j+OAjeOAguWuieijheWMheWFvOWuuSBBcHBsZSBTaWxpY29uIOWSjCBJbnRlbOOAguatpOeJiOS9v+eUqOS4tOaXtuetvuWQje+8jOacque7jyBBcHBsZSDlhazor4HvvJvpppbmrKHmiZPlvIDoi6Xooqvns7vnu5/pmLvmi6bvvIzlj6/ku6XlnKjjgIzns7vnu5/orr7nva4g4oC6IOmakOengeS4juWuieWFqOaAp+OAjeeCueOAjOS7jeimgeaJk+W8gOOAjeOAggoKIyMg6L+Z5LiA54mI5pyJ5LuA5LmICgotICoqV2luZG93cyDkvr/mkLrniYjpppbmrKHov5vlhaXmraPlvI8gUmVsZWFzZSoq44CCR0xPUklB44CBRG9yb+OAgeaKveixoeS5jOiQqOWlh+OAgUdyb2tCb3Qg5ZKMIDE0IOmFsemDveiDveWHuuWcuuOAguWPr+S7peaLjui1t+inkuiJsuaLluWKqOOAgeaKm+WHuu+8jOaIluiuqeWug+WdkOWcqOeql+WPo+S4iuayv+OAggotICoq5Lik5Liq5a6e5pe2IDNEIOinkuiJsioq44CCV2luZG93cyDnmoQgR3Jva0JvdCDlkowgMTQg6YWx5Lya6Lef552A5YWJ5qCH6L2s5aS077yM5pys54mI5L+u5q2j5LqG54K55Ye76KeS6Imy5pys5L2T5peg5rOV5ouW5Yqo55qE6Zeu6aKY44CCTWFjIOeJiOS5n+aWsOWinuS6huW4pumqqOmqvOWKqOeUu+eahCAxNCDphbHjgIIKLSAqKldpbmRvd3Mg5LiK55qEIEFnZW50IOWMlui6qyoq44CCQ2xhdWRlIENvZGXjgIFDb2RleOOAgUN1cnNvciDlkowgRFNIIOWPr+S7peeUqOawlOazoeaYvuekuua0u+WKqOWSjOWuoeaJueaPkOmGku+8jOWMlui6q+S5i+mXtOWPr+S7peaKm+S/oeS8oOmAkuWnlOaJmOOAguWPs+mUruiPnOWNleWPr+S9k+mqjCBDb21wdXRlciBVc2Ug5Yqo55S744CB5a2Q5Luj55CG5YiG6Lqr5ZKM6ZqP6IqC5ouN6Lez6Iie44CCCi0gKirmoYzlrqDliLDovr7nm67moIflkI7lho3mvJTlrozliqjkvZwqKuOAgkRvcm8g6LWw5ZCR6L6D6L+c55qE56qX5Y+j5pe277yM6LWw6Lev5pe26Ze05LiN5Lya6ICX5bC95omT5a2X5Yqo55S744CCCg==
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: GLORIA-dmg
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: GLORIA-Windows
-          path: dist
-      - name: Publish both packages
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify candidate and download the two packages
+        shell: bash
         run: |
-          version=${GITHUB_REF_NAME#v}
-          gh release create "$GITHUB_REF_NAME" "dist/GLORIA-$version.dmg" "dist/GLORIA-$version-Windows.zip" \
-            --verify-tag --title "GLORIA $version" --notes-from-tag
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$GH_REPO"
+          test "$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)" = "$CANDIDATE"
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN" > run.json
+          workflow=$(gh api "repos/$GH_REPO/actions/workflows/release.yml" --jq .id)
+          jq -e --arg repo "$GH_REPO" --arg sha "$CANDIDATE" --argjson workflow "$workflow" --argjson run "$SOURCE_RUN" '
+            .id==$run and .workflow_id==$workflow and .head_sha==$sha and .repository.full_name==$repo and
+            .head_repository.full_name==$repo and .status=="completed" and .conclusion=="success"
+          ' run.json >/dev/null
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN/jobs?per_page=100" > jobs.json
+          jq -e '([.jobs[]|select(.conclusion=="success")|.name] | contains(["dmg","windows / windows"]))' jobs.json >/dev/null
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN/artifacts?per_page=100" > artifacts.json
+          mkdir dist
+          fetch_package() {
+            local name=$1 file=$2 id digest actual
+            id=$(jq -er --arg name "$name" '[.artifacts[]|select(.name==$name and .expired==false)] | select(length==1) | .[0].id' artifacts.json)
+            digest=$(jq -er --argjson id "$id" '.artifacts[]|select(.id==$id)|.digest|select(test("^sha256:[0-9a-f]{64}$"))' artifacts.json)
+            gh api "repos/$GH_REPO/actions/artifacts/$id/zip" > "$name.zip"
+            actual="sha256:$(sha256sum "$name.zip" | cut -d' ' -f1)"
+            test "$actual" = "$digest"
+            test "$(unzip -Z -1 "$name.zip")" = "$file"
+            unzip -tqq "$name.zip"
+            unzip -p "$name.zip" "$file" > "dist/$file"
+            test -s "dist/$file"
+          }
+          fetch_package GLORIA-dmg GLORIA-0.9.0.dmg
+          fetch_package GLORIA-Windows GLORIA-0.9.0-Windows.zip
+          unzip -tqq dist/GLORIA-0.9.0-Windows.zip
+          test "$(tail -c 512 dist/GLORIA-0.9.0.dmg | head -c4)" = koly
+          sha256sum dist/*
+          printf '%s' "$NOTES_BASE64" | base64 -d > notes.md
+      - name: Publish the verified packages under the annotated tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)" = "$CANDIDATE"
+          ref="refs/tags/$TAG"
+          gh api "repos/$GH_REPO/git/matching-refs/tags/$TAG" > refs.json
+          existing=$(jq -r --arg ref "$ref" '.[]|select(.ref==$ref)|.object.sha' refs.json)
+          if [[ -z "$existing" ]]; then
+            jq -n --arg tag "$TAG" --arg sha "$CANDIDATE" --rawfile notes notes.md '{tag:$tag,message:$notes,object:$sha,type:"commit"}' > tag.json
+            existing=$(gh api --method POST "repos/$GH_REPO/git/tags" --input tag.json --jq .sha)
+            gh api --method POST "repos/$GH_REPO/git/refs" -f "ref=$ref" -f "sha=$existing" >/dev/null
+          fi
+          test "$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.type)" = tag
+          gh api "repos/$GH_REPO/git/tags/$existing" | jq -e --arg sha "$CANDIDATE" '.object.type=="commit" and .object.sha==$sha' >/dev/null
+          gh api "repos/$GH_REPO/releases?per_page=100" > releases.json
+          release_id=$(jq -r --arg tag "$TAG" '.[]|select(.tag_name==$tag)|.id' releases.json)
+          if [[ -z "$release_id" ]]; then
+            gh release create "$TAG" --repo "$GH_REPO" --draft --verify-tag --title 'GLORIA 0.9.0' --notes-file notes.md
+            release_id=$(gh api "repos/$GH_REPO/releases?per_page=100" | jq -er --arg tag "$TAG" '.[]|select(.tag_name==$tag)|.id')
+          fi
+          endpoint="repos/$GH_REPO/releases/$release_id"
+          draft=$(gh api "$endpoint" --jq .draft)
+          for file in dist/*; do
+            name=$(basename "$file")
+            expected="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+            gh api "$endpoint/assets" > assets.json
+            if ! jq -e --arg name "$name" 'any(.[];.name==$name)' assets.json >/dev/null; then
+              test "$draft" = true
+              gh release upload "$TAG" "$file" --repo "$GH_REPO"
+            fi
+            gh api "$endpoint/assets" | jq -e --arg name "$name" --arg expected "$expected" 'any(.[];.name==$name and .state=="uploaded" and .digest==$expected)' >/dev/null
+          done
+          if [[ "$draft" = true ]]; then
+            # Address the draft by ID so there is no dependency on finding it via a tag lookup.
+            gh api --method PATCH "$endpoint" -F draft=false -f make_latest=true --jq .html_url
+          fi
+          gh api "$endpoint" | jq -e '.draft==false and .prerelease==false and (.assets|length)==2' >/dev/null
