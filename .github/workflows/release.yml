@@ -24,3 +24,18 @@ jobs:
         with:
           name: GLORIA-dmg
           path: dist/*.dmg
+  windows:
+    uses: ./.github/workflows/windows.yml
+  publish-windows:
+    needs: [dmg, windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: GLORIA-Windows
+          path: dist
+      - name: Attach the Windows ZIP to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*-Windows.zip --repo "$GITHUB_REPOSITORY" --clobber

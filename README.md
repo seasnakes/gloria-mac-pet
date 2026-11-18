@@ -2,9 +2,9 @@
 
 <img src="docs/icon.png" width="128" alt="GLORIA 图标">
 
-# GLORIA · Mac 桌宠
+# GLORIA · 桌宠
 
-**坐在窗口边陪你写代码的 Mac 小桌宠。<br>平时跟着音乐跳舞，干活时替 Claude Code、Codex、Cursor 和 DSH 报信、传话、演 computer use。**
+**坐在窗口边陪你写代码的小桌宠。<br>平时跟着音乐跳舞，干活时替 Claude Code、Codex、Cursor 和 DSH 报信、传话、演 computer use。**
 
 <a href="#安装"><img src="https://img.shields.io/badge/macOS-14.2%2B-ff9ec8?style=flat-square&logo=apple&logoColor=white" alt="macOS 14.2+"></a>
 <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-b9a7f0?style=flat-square" alt="Apple Silicon + Intel">
@@ -29,6 +29,10 @@
 </div>
 
 ---
+
+**Windows 10 / 11：** 获取 Windows 便携 ZIP 后，完整解压并双击 `GLORIA.exe`。四个角色都能出场，GrokBot 会用实时 3D 跟着光标转头，角色之间能抛信封传递委托，也能躲到屏幕边缘探头。右键角色或托盘图标可接入 Agent、跟随窗口或随声音跳舞。[Windows 版使用说明、构建与功能差异](Windows/README.md)。下文演示及 DMG 安装说明以 Mac 版为准。
+
+<img src="docs/windows-pets.png" width="820" alt="Windows 11 实测：四个角色分别演示看文件、打字、等待批准和截图">
 
 做这个小工具，最开始是觉得一个人对着屏幕 vibe coding 有点冷清，想在窗口边放几个会动的小家伙添点气氛。
 
@@ -259,7 +263,7 @@ make app
 
 ## 素材与许可
 
-代码（`Sources/`、`tools/`、各角色的生成脚本）以 [MIT](LICENSE) 授权。角色美术不在 MIT 范围内，各自的来源如下：
+代码（`Sources/`、`Windows/` 下的代码、`tools/`、各角色的生成脚本）以 [MIT](LICENSE) 授权。角色美术不在 MIT 范围内，各自的来源如下：
 
 | 角色 | 来源 | 说明 |
 | --- | --- | --- |
