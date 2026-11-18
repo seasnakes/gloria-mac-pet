@@ -1,7 +1,23 @@
+using System;
+using System.IO;
+using System.Text;
+
 namespace Gloria {
-    static class HookMain {
+    static class HookProgram {
         static int Main(string[] args) {
-            return args.Length==2 && args[0]=="--gloria-hook"?Events.Forward(args[1]):2;
+            if (args.Length == 2 && (args[0] == "--gloria-hook" || args[0] == "--hook")) {
+                return Events.Forward(args[1]);
+            }
+            if (args.Length >= 1 && args[0] == "--ctl") {
+                string payload = args.Length >= 2 ? args[1] : "";
+                if (payload == "-" || String.IsNullOrEmpty(payload)) {
+                    using (var sr = new StreamReader(Console.OpenStandardInput(), Encoding.UTF8, true)) {
+                        payload = sr.ReadToEnd();
+                    }
+                }
+                return Events.Control(payload);
+            }
+            return 2;
         }
     }
 }

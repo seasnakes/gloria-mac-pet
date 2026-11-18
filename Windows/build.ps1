@@ -1,19 +1,26 @@
 # Windows PowerShell 5.1 or PowerShell 7. No SDK/NuGet restore required.
-[CmdletBinding()] param([string]$OutputDirectory = (Join-Path (Split-Path $PSScriptRoot) 'dist'))
+[CmdletBinding()] param([string]$OutputDirectory = "")
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    $OutputDirectory = Join-Path $root 'dist'
+}
 $framework = @('FrameworkArm64','Framework64','Framework') | ForEach-Object {
     Join-Path $env:WINDIR "Microsoft.NET\$_\v4.0.30319"
 } | Where-Object { Test-Path (Join-Path $_ 'csc.exe') } | Select-Object -First 1
-if (!$framework) {throw 'Enable .NET Framework 4.8 before building.'}
+if (!$framework) { throw 'Enable .NET Framework 4.8 before building.' }
 $csc = Join-Path $framework 'csc.exe'
 $version = (Get-Content (Join-Path $root VERSION) -Raw).Trim()
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('gloria-build-' + [guid]::NewGuid())
 $null = New-Item -Type Directory $stage -Force
 try {
-    $flags = @('/nologo','/platform:anycpu','/optimize+','/codepage:65001', '/r:System.Web.Extensions.dll')
+    $flags = @('/nologo','/platform:anycpu','/optimize+','/codepage:65001','/r:System.Web.Extensions.dll')
     $wpf = @('WindowsBase','PresentationCore','PresentationFramework') | ForEach-Object { "/r:$framework\WPF\$_.dll" }
-    $sources = @('Events.cs','Character.cs','Desktop.cs','Hooks.cs','Pet.cs','Peek.cs','Courier.cs','AgentCalls.cs','ModelScene.cs','App.cs') | ForEach-Object {Join-Path $PSScriptRoot $_}
+    $sources = @(
+        'Support.cs','Events.cs','AgentCalls.cs','Hooks.cs','Character.cs',
+        'Desktop.cs','Music.cs','Bubble.cs','ModelScene.cs','ComputerUse.cs',
+        'Courier.cs','Peek.cs','Pet.cs','Husk.cs','App.cs'
+    ) | ForEach-Object { Join-Path $PSScriptRoot $_ }
     & $csc @flags @wpf /r:System.Xaml.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Xml.Linq.dll /r:System.Runtime.Serialization.dll /target:winexe "/win32icon:$PSScriptRoot\assets\GLORIA.ico" "/out:$stage\GLORIA.exe" @sources
     if ($LASTEXITCODE) { throw "GLORIA build failed ($LASTEXITCODE)" }
     & $csc @flags /target:exe "/out:$stage\GLORIA-Hook.exe" "$PSScriptRoot\Events.cs" "$PSScriptRoot\AgentCalls.cs" "$PSScriptRoot\HookMain.cs"
@@ -36,7 +43,15 @@ try {
     $tempZip = "$zip.$([guid]::NewGuid()).tmp"
     try {
         [IO.Compression.ZipFile]::CreateFromDirectory($stage,$tempZip)
-        if ([IO.File]::Exists($zip)) {[IO.File]::Replace($tempZip,$zip,[System.Management.Automation.Language.NullString]::Value)} else {[IO.File]::Move($tempZip,$zip)}
-    } finally {if (Test-Path $tempZip) {Remove-Item -LiteralPath $tempZip}}
+        if ([IO.File]::Exists($zip)) {
+            [IO.File]::Replace($tempZip,$zip,[System.Management.Automation.Language.NullString]::Value)
+        } else {
+            [IO.File]::Move($tempZip,$zip)
+        }
+    } finally {
+        if (Test-Path $tempZip) { Remove-Item -LiteralPath $tempZip }
+    }
     Write-Output $zip
-} finally {Remove-Item -LiteralPath $stage -Force -Recurse}
+} finally {
+    Remove-Item -LiteralPath $stage -Force -Recurse
+}

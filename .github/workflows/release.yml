@@ -1,4 +1,4 @@
-# Push a tag like v0.6.0 → build the universal DMG on a Mac runner and attach it to that GitHub release.
+# A branch run builds both packages. A version tag also publishes them together.
 name: release
 on:
   push:
@@ -13,29 +13,42 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the DMG
         run: bash build.sh --dmg
-      - name: Attach it to the release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify the packaged Mac application
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "GLORIA $GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber
+          version=$(cat VERSION)
+          dmg="dist/GLORIA-$version.dmg"
+          hdiutil verify "$dmg"
+          mount_dir=$(mktemp -d)
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          app="$mount_dir/GLORIA.app/Contents"
+          codesign --verify --deep --strict "$mount_dir/GLORIA.app"
+          lipo -verify_arch arm64 x86_64 "$app/MacOS/GLORIA"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")" = "$version"
+          for pet in fourteen grokbot; do test -s "$app/Resources/$pet.usdz"; done
       - uses: actions/upload-artifact@v4
         with:
           name: GLORIA-dmg
           path: dist/*.dmg
   windows:
     uses: ./.github/workflows/windows.yml
-  publish-windows:
+  publish:
     needs: [dmg, windows]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: GLORIA-dmg
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
           name: GLORIA-Windows
           path: dist
-      - name: Attach the Windows ZIP to the release
+      - name: Publish both packages
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*-Windows.zip --repo "$GITHUB_REPOSITORY" --clobber
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          gh release create "$GITHUB_REF_NAME" "dist/GLORIA-$version.dmg" "dist/GLORIA-$version-Windows.zip" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "GLORIA $version" --notes-from-tag

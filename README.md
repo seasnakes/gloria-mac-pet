@@ -9,8 +9,8 @@
 <a href="#安装"><img src="https://img.shields.io/badge/macOS-14.2%2B-ff9ec8?style=flat-square&logo=apple&logoColor=white" alt="macOS 14.2+"></a>
 <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-b9a7f0?style=flat-square" alt="Apple Silicon + Intel">
 <img src="https://img.shields.io/badge/Swift-AppKit%20%2B%20SceneKit-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
-<a href="https://github.com/seasnakes/gloria-mac-pet/releases/latest"><img src="https://img.shields.io/badge/下载-DMG-7fd3f5?style=flat-square" alt="下载 DMG"></a>
-<img src="https://img.shields.io/badge/version-0.8.0-7fd3f5?style=flat-square" alt="v0.8.0">
+<a href="https://github.com/seasnakes/gloria-mac-pet/releases/latest"><img src="https://img.shields.io/badge/下载-DMG%20%7C%20Windows%20ZIP-7fd3f5?style=flat-square" alt="下载 Mac DMG 或 Windows ZIP"></a>
+<img src="https://img.shields.io/badge/version-0.9.0-7fd3f5?style=flat-square" alt="v0.9.0">
 <img src="https://img.shields.io/badge/联网-不需要-8fd19e?style=flat-square" alt="不联网">
 <a href="LICENSE"><img src="https://img.shields.io/badge/代码-MIT-f7c873?style=flat-square" alt="代码 MIT"></a><br>
 <a href="#四个-agent-的化身"><img src="https://img.shields.io/badge/Claude%20Code-化身-D97757?style=flat-square&logo=claude&logoColor=white" alt="Claude Code 化身"></a>
@@ -30,7 +30,7 @@
 
 ---
 
-**Windows 10 / 11：** 获取 Windows 便携 ZIP 后，完整解压并双击 `GLORIA.exe`。四个角色都能出场，GrokBot 会用实时 3D 跟着光标转头，角色之间能抛信封传递委托，也能躲到屏幕边缘探头。右键角色或托盘图标可接入 Agent、跟随窗口或随声音跳舞。[Windows 版使用说明、构建与功能差异](Windows/README.md)。下文演示及 DMG 安装说明以 Mac 版为准。
+**Windows 10 / 11：** 获取 Windows 便携 ZIP 后，完整解压并双击 `GLORIA.exe`。五个角色都能出场，GrokBot 和 14 酱会用实时 3D 跟着光标转头，角色之间能抛信封传递委托，也能躲到屏幕边缘探头。右键角色或托盘图标可接入 Agent、跟随窗口或随声音跳舞。[Windows 版使用说明、构建与功能差异](Windows/README.md)。下文演示及 DMG 安装说明以 Mac 版为准。
 
 <img src="docs/windows-pets.png" width="820" alt="Windows 11 实测：四个角色分别演示看文件、打字、等待批准和截图">
 
@@ -157,7 +157,7 @@ make install    # = bash build.sh --install：构建、装进 /Applications 并�
 make dmg        # = bash build.sh --dmg：做出 dist/GLORIA-<版本>.dmg（arm64 + x86_64）
 ```
 
-如果有 Apple Developer ID，设上 `SIGN_ID="Developer ID Application: …"` 就会用它给 DMG 里的 App 签名；再设 `NOTARY_PROFILE` 还会公证 DMG，别人打开时不会被拦。推送 `v*` 标签时，GitHub Actions（`.github/workflows/release.yml`）会自动构建 DMG 并挂到对应的 Release 上。
+如果有 Apple Developer ID，设上 `SIGN_ID="Developer ID Application: …"` 就会用它给 DMG 里的 App 签名；再设 `NOTARY_PROFILE` 还会公证 DMG，别人打开时不会被拦。推送 `v*` 标签时，GitHub Actions（`.github/workflows/release.yml`）会自动构建 Mac DMG 和 Windows 便携 ZIP，通过检查后发布到同一个 Release。
 
 她们不占 Dock。菜单栏里有一排出场角色的小头像，右键角色本人也能打开同一个菜单。找不到她们时点「叫她们过来」，开机自启在菜单里勾选「登录时启动」。
 
