@@ -15,8 +15,8 @@ function Configure($source,$state,$expected=0) {
     $r=Start-Process -FilePath $app -ArgumentList @('--hooks',$source,$state) -PassThru -Wait
     if($r.ExitCode -ne $expected){throw "$source $state returned $($r.ExitCode), expected $expected"}
 }
-function Wait-Pose($id,$pose) {
-    $until=[datetime]::UtcNow.AddSeconds(5)
+function Wait-Pose($id,$pose,$timeout=5) {
+    $until=[datetime]::UtcNow.AddSeconds($timeout)
     $title="GLORIA $([char]0xb7) $id $([char]0xb7) $pose"
     do {
         $h=[GloriaWindowsTest]::FindWindow([System.Management.Automation.Language.NullString]::Value,$title)
@@ -87,9 +87,17 @@ public static class GloriaWindowsTest {
         Wait-Pose usagi waiting
         '{"hook_event_name":"Stop","session_id":"A"}' | & $cmd @cliArgs
         Wait-Pose usagi wave
+        # A maximized target has no top ledge. Exercise the walk before the typing pose.
+        $helper=Join-Path $bin 'GLORIA-Hook.exe'
+        $deskSnapshot='{"ctl":"desk"}' | & $helper --ctl - | ConvertFrom-Json
+        $area=$deskSnapshot.screens[0].working
+        $rect=@($area[0],$area[1],[Math]::Min(1200,$area[2]),$area[3])
+        @{ctl='stage';wins=@(@{owner='SmokeTarget';rect=$rect})} | ConvertTo-Json -Depth 5 -Compress | & $helper --ctl - | Out-Null
+        @{ctl='place';pet='doro';x=($area[0]+80);y=($area[1]+$area[3]-2)} | ConvertTo-Json -Compress | & $helper --ctl - | Out-Null
+        Start-Sleep -Milliseconds 650
         # Only execute our just-generated commands in this isolated fixture.
         '{"hook_event_name":"PreToolUse","tool_name":"mcp__cua_repl__js","tool_input":{"code":"x.typeText({})"}}' | & ([scriptblock]::Create('$input | '+$cmds.codex.command))
-        Wait-Pose doro type
+        Wait-Pose doro type 20
         '{"hook_event_name":"postToolUse","tool_name":"Read"}' | & ([scriptblock]::Create('$input | '+$cmds.cursor.command)) | Out-Null
         Wait-Pose gloria work
         '{"hook_event_name":"PreToolUse","tool_name":"read"}' | & ([scriptblock]::Create('$input | '+$cmds.dsh.command))

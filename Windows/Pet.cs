@@ -967,6 +967,13 @@ namespace Gloria {
 
         void StepFrame() {
             double t = Clock.Now;
+            // A walk across a maximized window can take longer than the action itself.
+            // Only count time toward the gesture while its pose can be displayed.
+            if (acting != null && acting.Until > lastTick && (mode == PetMode.Walking || mode == PetMode.Hopping)) {
+                double travelTime = t - Math.Max(lastTick, acting.Start);
+                acting.Start += travelTime;
+                acting.Until += travelTime;
+            }
             double dt = Calc.Clamp(t - lastTick, 0.0005, 0.05);
             lastTick = t;
 
