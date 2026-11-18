@@ -26,11 +26,13 @@ if [ "$DMG" = 1 ]; then ARCHS="${ARCHS:-arm64 x86_64}"; else ARCHS="${ARCHS:-$(u
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# Pets: sprite sheets (gloria, doro, usagi) and GrokBot's 3D model. Each has <id>.json; see characters/<id>/.
+# Pets: sprite sheets (gloria, doro, usagi) and 3D models. Each has <id>.json; see characters/<id>/.
 for id in gloria doro usagi; do
   cp "$ROOT/characters/$id/$id.png" "$ROOT/characters/$id/$id.json" "$APP/Contents/Resources/"
 done
-cp "$ROOT/characters/grokbot/grokbot.usdz" "$ROOT/characters/grokbot/grokbot.json" "$APP/Contents/Resources/"
+for id in grokbot fourteen; do
+  cp "$ROOT/characters/$id/$id.usdz" "$ROOT/characters/$id/$id.json" "$APP/Contents/Resources/"
+done
 
 # Icon (tools/make_icon.py regenerates it) and Info.plist.
 cp "$ROOT/Resources/GLORIA.icns" "$APP/Contents/Resources/"

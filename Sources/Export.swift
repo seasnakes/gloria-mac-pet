@@ -26,12 +26,12 @@ enum Export {
             for a in Anim.allCases where ch.has(a) {
                 for i in 0..<ch.count(a) {
                     let c = ch.cell(a, i)
-                    if cells[c] == nil, let img = model.snapshot(GrokPoses.pose(a, i, look: 0), size: size) { cells[c] = img }
+                    if cells[c] == nil, let img = model.snapshot(model.pose(a, i, look: 0), size: size) { cells[c] = img }
                 }
             }
             for d in 0..<16 {
                 let c = Cell(row: 9 + d / 8, col: d % 8)
-                if let img = model.snapshot(GrokPoses.pose(nil, 0, look: Double(d) * 22.5), size: size) { cells[c] = img }
+                if let img = model.snapshot(model.pose(nil, 0, look: Double(d) * 22.5), size: size) { cells[c] = img }
             }
         } else {
             for r in 0..<ch.sprites.rows { for col in 0..<8 { let c = Cell(row: r, col: col); if ch.sprites.has(c), let img = ch.sprites.image(c) { cells[c] = img } } }

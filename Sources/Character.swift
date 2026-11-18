@@ -67,14 +67,15 @@ final class Character {
 
     /// The 3D pose for a cell the state machine picked. Look cells use the exact angle when it's the one being shown.
     func pose3D(for c: Cell, look: Double) -> Pose3D {
+        guard let model else { return Pose3D() }
         if c.row == 9 || c.row == 10 {
             let deg = Double((c.row - 9) * 8 + c.col) * 22.5
             var d = (look - deg).truncatingRemainder(dividingBy: 360)
             if d > 180 { d -= 360 } else if d < -180 { d += 360 }
-            return GrokPoses.pose(nil, 0, look: abs(d) <= 11.25 ? look : deg)
+            return model.pose(nil, 0, look: abs(d) <= 11.25 ? look : deg)
         }
-        guard let a = owner[c], let s = specs[a] else { return GrokPoses.pose(.idle, 0, look: look) }
-        return GrokPoses.pose(a, (c.row - s.row) * 8 + c.col, look: look)
+        guard let a = owner[c], let s = specs[a] else { return model.pose(.idle, 0, look: look) }
+        return model.pose(a, (c.row - s.row) * 8 + c.col, look: look)
     }
 
     func spec(_ a: Anim) -> AnimSpec { specs[a] ?? specs[.idle]! }
@@ -115,7 +116,7 @@ final class Character {
     /// Which animation a cell belongs to (for "is she sitting?").
     func anim(of c: Cell) -> Anim? { owner[c] }
 
-    static let builtIn = ["gloria", "doro", "usagi", "grokbot"]
+    static let builtIn = ["gloria", "doro", "usagi", "grokbot", "fourteen"]
     /// Imported pets: Application Support/GLORIA/characters/<id>/<id>.json + <id>.png.
     static var userDir: URL { Paths.support.appendingPathComponent("characters", isDirectory: true) }
 
@@ -239,8 +240,12 @@ final class Character {
     func icon(size: CGFloat) -> NSImage? {
         if let model {
             // The face of the 3D model: render the resting pose and crop around the round body.
-            guard let img = model.snapshot(GrokPoses.pose(.idle, 0, look: 90), size: CGSize(width: Sprites.cellW * 2, height: Sprites.cellH * 2)),
-                  let c = img.cropping(to: CGRect(x: 48 * 2, y: 88 * 2, width: 96 * 2, height: 90 * 2)) else { return nil }
+            let crop: CGRect
+            if id == "fourteen", let f = face {
+                crop = CGRect(x: (f.x - f.r) * 2, y: (f.y - f.r) * 2, width: f.r * 4, height: f.r * 4)
+            } else { crop = CGRect(x: 96, y: 176, width: 192, height: 180) }
+            guard let img = model.snapshot(model.pose(.idle, 0, look: 90), size: CGSize(width: Sprites.cellW * 2, height: Sprites.cellH * 2)),
+                  let c = img.cropping(to: crop) else { return nil }
             return NSImage(cgImage: c, size: NSSize(width: size * 96 / 90, height: size))
         }
         guard let img = sprites.image(cell(.idle, 0)) else { return nil }

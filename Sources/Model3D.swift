@@ -23,6 +23,7 @@ struct Part3D {
 
 /// Where every part of the robot is in one moment.
 struct Pose3D {
+    var limbs = FourteenLimbs()
     var rot = SIMD3<Double>(0, 0, 0)          // whole body, degrees, about the core
     var move = SIMD2<Double>(0, 0)            // x, z
     var squash = 0.0                          // + flatter, − taller
@@ -39,6 +40,7 @@ struct Pose3D {
 
     /// Ease toward another pose (k = 0…1 of the way); the face and props switch at once.
     mutating func approach(_ t: Pose3D, _ k: Double) {
+        limbs.approach(t.limbs, k)
         rot += (t.rot - rot) * k; move += (t.move - move) * k; squash += (t.squash - squash) * k
         earL.approach(t.earL, k); earR.approach(t.earR, k); finL.approach(t.finL, k); finR.approach(t.finR, k)
         glance += (t.glance - glance) * k; blink += (t.blink - blink) * min(1, k * 2.5)
@@ -55,60 +57,27 @@ final class Model3D {
     let scene: SCNScene
     private let renderer: SCNRenderer
     private let camera = SCNNode()
-    private let bot, earL, earR, finL, finR, eye, ring, cursor: SCNNode
-    private var faces: [String: SCNNode] = [:]
-    private var base: [ObjectIdentifier: (pos: SIMD3<Float>, rot: SIMD3<Double>, scale: SIMD3<Float>)] = [:]
-    private let glow: SCNMaterial?
-    private let keyboard = SCNNode()
-    private var keys: [SCNNode] = []
-    private let keyOn = Model3D.glowing(NSColor(srgbRed: 0.9, green: 1, blue: 1, alpha: 1))
-    private let keyOff = Model3D.glowing(NSColor(srgbRed: 0.35, green: 0.85, blue: 1, alpha: 1))
-    private let ripple = SCNNode()
-    private let flash = SCNNode()
+    private let grok: GrokRig?
+    private let doll: FourteenRig?
     private var targets: [String: (color: MTLTexture, depth: MTLTexture)] = [:]
-    private static let core = SIMD3<Double>(0, 0, 1.17)
-    /// Centre of the black visor sphere (Core) in Bot_root's space, and the eyes' resting turn. The LED faces are curved
-    /// panels hugging that sphere, so a glance turns them about its centre; sliding them sideways sank one into the glass.
-    private let visor: SIMD3<Float>
-    private let eyeRest: simd_quatf
-
     init?(url: URL) {
         guard let dev = Model3D.device, let sc = try? SCNScene(url: url, options: [.convertToYUp: true]) else { return nil }
         sc.background.contents = NSColor.clear
         sc.rootNode.childNode(withName: "env_light", recursively: true)?.removeFromParentNode()
-        func n(_ name: String) -> SCNNode? { sc.rootNode.childNode(withName: name, recursively: true) }
-        guard let root = n("root"), let b = n("Bot_root"), let el = n("EarPivot_1"), let er = n("EarPivot1"),
-              let fl = n("FinPivot_1"), let fr = n("FinPivot1"), let e = n("EyePivot"), let r = n("HoverRing"), let c = n("Cursor") else { return nil }
-        var fs: [String: SCNNode] = [:]
-        for f in ["angry", "bars", "happy", "love", "neutral", "sad", "sleepy", "star", "surprised"] { fs[f] = n("E_Eyes_" + f) }
-        var g: SCNMaterial?
-        r.enumerateHierarchy { node, _ in if let m = node.geometry?.firstMaterial { g = m } }
-        var bs: [ObjectIdentifier: (pos: SIMD3<Float>, rot: SIMD3<Double>, scale: SIMD3<Float>)] = [:]
-        for node in [b, el, er, fl, fr, e, r, c] {
-            let a = node.eulerAngles
-            bs[ObjectIdentifier(node)] = (node.simdPosition, SIMD3(Double(a.x), Double(a.y), Double(a.z)), node.simdScale)
-        }
-        var vc = SIMD3<Float>(0, 0, 1)
-        if let sphere = n("Core")?.childNodes.first(where: { $0.geometry != nil }) ?? n("Core") {
-            let (lo, hi) = sphere.boundingBox
-            vc = b.simdConvertPosition((SIMD3<Float>(lo) + SIMD3<Float>(hi)) / 2, from: sphere)
-        }
-        visor = vc; eyeRest = e.simdOrientation
         scene = sc
-        bot = b; earL = el; earR = er; finL = fl; finR = fr; eye = e; ring = r; cursor = c
-        faces = fs; glow = g; base = bs
+        doll = FourteenRig(scene: sc)
+        grok = doll == nil ? GrokRig(scene: sc) : nil
+        guard doll != nil || grok != nil else { return nil }
         renderer = SCNRenderer(device: dev, options: nil)
         renderer.scene = scene
         renderer.autoenablesDefaultLighting = false
-        Model3D.addProps(to: b, root: root, keyboard: keyboard, keys: &keys, keyOff: keyOff, ripple: ripple, flash: flash)
-
         // Orthographic, a little from above, framed like the sprite cells: the ground under the ring lands on (96, 202).
         let cam = SCNCamera()
         cam.usesOrthographicProjection = true
         cam.orthographicScale = 1.81
         cam.zNear = 0.1; cam.zFar = 60
         camera.camera = cam
-        let aim = SCNVector3(0, 1.72, 0), pitch = 8.0 * Double.pi / 180
+        let aim = SCNVector3(0, 1.72, 0), pitch = (doll == nil ? 8.0 : 2.0) * Double.pi / 180
         camera.position = SCNVector3(0, 1.72 + 12 * sin(pitch), -12 * cos(pitch))
         camera.look(at: aim, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
         scene.rootNode.addChildNode(camera)
@@ -120,14 +89,30 @@ final class Model3D {
         let dx = Double(pv.x - W / 2), dy = Double(pv.y - (H - Sprites.footUp))
         camera.simdPosition += camera.simdWorldRight * Float(dx * unit) - camera.simdWorldUp * Float(dy * unit)
 
-        func light(_ t: SCNLight.LightType, _ i: CGFloat, _ p: SCNVector3) {
+        func light(_ t: SCNLight.LightType, _ i: CGFloat, _ p: SCNVector3, shadows: Bool = false) {
             let l = SCNNode(); l.light = SCNLight(); l.light!.type = t; l.light!.intensity = i
+            if shadows {
+                let key = l.light!
+                key.castsShadow = true
+                key.shadowMode = .forward
+                key.orthographicScale = 2.5
+                key.shadowMapSize = CGSize(width: 1024, height: 1024)
+                key.shadowRadius = 2
+                key.shadowSampleCount = 8
+                key.shadowBias = 0.015
+                key.shadowColor = NSColor(white: 0, alpha: 0.36)
+            }
             l.position = p; l.look(at: aim); scene.rootNode.addChildNode(l)
         }
-        light(.directional, 1000, SCNVector3(4, 5, -5))
-        light(.directional, 420, SCNVector3(-5, 2.5, -4))
-        light(.directional, 600, SCNVector3(0, 4, 4))
-        light(.ambient, 260, SCNVector3(0, 0, 0))
+        if doll != nil {
+            light(.directional, 595, SCNVector3(-5, 7, -5), shadows: true)
+            light(.ambient, 580, SCNVector3Zero)
+        } else {
+            light(.directional, 1000, SCNVector3(4, 5, -5))
+            light(.directional, 420, SCNVector3(-5, 2.5, -4))
+            light(.directional, 600, SCNVector3(0, 4, 4))
+            light(.ambient, 260, SCNVector3Zero)
+        }
     }
 
     /// Screen point (top-left origin, cell units) of a world point for this orthographic camera.
@@ -139,7 +124,7 @@ final class Model3D {
         return CGPoint(x: CGFloat((nx + 1) / 2) * size.width, y: CGFloat((1 - ny) / 2) * size.height)
     }
 
-    private static func glowing(_ c: NSColor, alpha: CGFloat = 1) -> SCNMaterial {
+    fileprivate static func glowing(_ c: NSColor, alpha: CGFloat = 1) -> SCNMaterial {
         let m = SCNMaterial()
         m.lightingModel = .constant
         m.diffuse.contents = c
@@ -150,105 +135,20 @@ final class Model3D {
     }
 
     /// Blender XYZ Euler (degrees) → quaternion (X first, then Y, then Z).
-    private static func quat(_ r: SIMD3<Double>) -> simd_quatf {
+    static func quat(_ r: SIMD3<Double>) -> simd_quatf {
         let qx = simd_quatf(angle: Float(r.x * .pi / 180), axis: [1, 0, 0])
         let qy = simd_quatf(angle: Float(r.y * .pi / 180), axis: [0, 1, 0])
         let qz = simd_quatf(angle: Float(r.z * .pi / 180), axis: [0, 0, 1])
         return qz * qy * qx
     }
 
-    private static func addProps(to bot: SCNNode, root: SCNNode, keyboard: SCNNode, keys: inout [SCNNode], keyOff: SCNMaterial,
-                                 ripple: SCNNode, flash: SCNNode) {
-        // Holographic keyboard: a faint pane with three rows of glowing keys, tilted toward her.
-        let pane = SCNPlane(width: 1.08, height: 0.36)
-        pane.firstMaterial = glowing(NSColor(srgbRed: 0.1, green: 0.45, blue: 0.8, alpha: 1), alpha: 0.45)
-        keyboard.addChildNode(SCNNode(geometry: pane))
-        for row in 0..<3 {
-            let n = row == 2 ? 7 : 9
-            for col in 0..<n {
-                let k = SCNNode(geometry: SCNBox(width: 0.085, height: 0.07, length: 0.012, chamferRadius: 0.006))
-                k.geometry?.firstMaterial = keyOff
-                k.simdPosition = [Float(Double(col) - Double(n - 1) / 2) * 0.108, Float(1 - row) * 0.11, 0.02]
-                keyboard.addChildNode(k)
-                keys.append(k)
-            }
-        }
-        keyboard.simdPosition = [0, -0.95, 0.3]
-        keyboard.simdOrientation = quat([62, 0, 0])
-        keyboard.isHidden = true
-        bot.addChildNode(keyboard)
-        // Click ripple: a glowing ring facing her (an SCNTorus already stands in Blender's XZ plane here).
-        let torus = SCNTorus(ringRadius: 0.2, pipeRadius: 0.018)
-        torus.firstMaterial = glowing(NSColor(srgbRed: 0.5, green: 0.95, blue: 1, alpha: 1), alpha: 0.9)
-        ripple.geometry = torus
-        ripple.isHidden = true
-        root.addChildNode(ripple)
-        // Shutter sparkle: four thin crossed bars.
-        let warm = glowing(NSColor(srgbRed: 1, green: 1, blue: 0.9, alpha: 1))
-        for (k, (w, h)) in [(0.06, 0.34), (0.34, 0.06), (0.035, 0.2), (0.2, 0.035)].enumerated() {
-            let p = SCNPlane(width: w, height: h)
-            p.firstMaterial = warm
-            let bar = SCNNode(geometry: p)
-            bar.simdOrientation = quat([90, k > 1 ? 45 : 0, 0])
-            flash.addChildNode(bar)
-        }
-        flash.isHidden = true
-        root.addChildNode(flash)
-    }
-
-    // MARK: Posing
-
-    private func place(_ node: SCNNode, _ p: Part3D) {
-        guard let b = base[ObjectIdentifier(node)] else { return }
-        node.simdPosition = b.pos + SIMD3<Float>(Float(p.at.x), Float(p.at.y), Float(p.at.z))
-        node.simdOrientation = Model3D.quat(b.rot * 180 / .pi + p.rot)
-        node.simdScale = b.scale * Float(p.scale)
+    func pose(_ anim: Anim?, _ i: Int, look: Double) -> Pose3D {
+        if doll != nil { return FourteenRig.pose(anim, i, look: look) }
+        return GrokPoses.pose(anim, i, look: look)
     }
 
     func apply(_ p: Pose3D) {
-        SCNTransaction.begin(); SCNTransaction.disableActions = true
-        // Body: turn and lean about the core, then shift and squash.
-        if let b = base[ObjectIdentifier(bot)] {
-            let q = Model3D.quat(p.rot)
-            let l0 = SIMD3<Double>(Double(b.pos.x), Double(b.pos.y), Double(b.pos.z))
-            let rel = simd_act(simd_quatd(ix: Double(q.imag.x), iy: Double(q.imag.y), iz: Double(q.imag.z), r: Double(q.real)), l0 - Model3D.core)
-            let pos = Model3D.core + rel + SIMD3(p.move.x, 0, p.move.y)
-            bot.simdPosition = SIMD3<Float>(Float(pos.x), Float(pos.y), Float(pos.z))
-            bot.simdOrientation = q
-            bot.simdScale = [Float(1 + p.squash * 0.6), Float(1 + p.squash * 0.6), Float(1 - p.squash)]
-        }
-        place(earL, p.earL); place(earR, p.earR); place(finL, p.finL); place(finR, p.finR)
-        if let b = base[ObjectIdentifier(eye)] {
-            // Glance = roll the eyes over the visor: arc length glance.x across (about Blender Z), glance.y up (about X).
-            let off = b.pos - visor, r = max(0.2, simd_length(off))
-            let q = simd_quatf(angle: Float(p.glance.x) / r, axis: [0, 0, 1]) * simd_quatf(angle: -Float(p.glance.y) / r, axis: [1, 0, 0])
-            eye.simdPosition = visor + q.act(off)
-            eye.simdOrientation = q * eyeRest
-            eye.simdScale = [b.scale.x, b.scale.y, b.scale.z * Float(max(0.06, 1 - p.blink))]
-        }
-        for (name, f) in faces { f.isHidden = name != p.face }
-        if let b = base[ObjectIdentifier(ring)] {
-            ring.isHidden = !p.ring
-            ring.simdPosition = b.pos + SIMD3<Float>(Float(p.move.x), 0, 0)
-            ring.simdScale = b.scale * Float(p.ringScale)
-        }
-        glow?.emission.intensity = CGFloat(p.ringGlow)
-        if let c = p.cursor {
-            cursor.isHidden = false
-            cursor.simdPosition = [Float(c.x), Float(c.y), Float(c.z)]
-            cursor.simdScale = SIMD3(repeating: Float(c.w))
-        } else { cursor.isHidden = true }
-        keyboard.isHidden = p.keys == nil
-        if let lit = p.keys { for (i, k) in keys.enumerated() { k.geometry?.firstMaterial = lit.contains(i) ? keyOn : keyOff } }
-        if let r = p.ripple {
-            ripple.isHidden = false
-            ripple.simdPosition = [Float(r.x), Float(r.y), Float(r.z)]; ripple.simdScale = SIMD3(repeating: Float(r.w))
-        } else { ripple.isHidden = true }
-        if let s = p.shutter {
-            flash.isHidden = false
-            flash.simdPosition = [Float(s.x), Float(s.y), Float(s.z)]; flash.simdScale = SIMD3(repeating: Float(s.w))
-        } else { flash.isHidden = true }
-        SCNTransaction.commit()
+        if let doll { doll.apply(p) } else { grok?.apply(p) }
     }
 
     // MARK: Drawing
@@ -304,6 +204,143 @@ final class Model3D {
                                                                SCNHitTestOption.ignoreHiddenNodes.rawValue: true])
         return !hit.isEmpty
     }
+}
+
+private final class GrokRig {
+    private let bot, earL, earR, finL, finR, eye, ring, cursor: SCNNode
+    private var faces: [String: SCNNode] = [:]
+    private var base: [ObjectIdentifier: (pos: SIMD3<Float>, rot: SIMD3<Double>, scale: SIMD3<Float>)] = [:]
+    private let glow: SCNMaterial?
+    private let keyboard = SCNNode()
+    private var keys: [SCNNode] = []
+    private let keyOn = Model3D.glowing(NSColor(srgbRed: 0.9, green: 1, blue: 1, alpha: 1))
+    private let keyOff = Model3D.glowing(NSColor(srgbRed: 0.35, green: 0.85, blue: 1, alpha: 1))
+    private let ripple = SCNNode()
+    private let flash = SCNNode()
+    private static let core = SIMD3<Double>(0, 0, 1.17)
+    /// Centre of the black visor sphere (Core) in Bot_root's space, and the eyes' resting turn. The LED faces are curved
+    /// panels hugging that sphere, so a glance turns them about its centre; sliding them sideways sank one into the glass.
+    private let visor: SIMD3<Float>
+    private let eyeRest: simd_quatf
+
+    init?(scene sc: SCNScene) {
+        func n(_ name: String) -> SCNNode? { sc.rootNode.childNode(withName: name, recursively: true) }
+        guard let root = n("root"), let b = n("Bot_root"), let el = n("EarPivot_1"), let er = n("EarPivot1"),
+              let fl = n("FinPivot_1"), let fr = n("FinPivot1"), let e = n("EyePivot"), let r = n("HoverRing"), let c = n("Cursor") else { return nil }
+        var fs: [String: SCNNode] = [:]
+        for f in ["angry", "bars", "happy", "love", "neutral", "sad", "sleepy", "star", "surprised"] { fs[f] = n("E_Eyes_" + f) }
+        var g: SCNMaterial?
+        r.enumerateHierarchy { node, _ in if let m = node.geometry?.firstMaterial { g = m } }
+        var bs: [ObjectIdentifier: (pos: SIMD3<Float>, rot: SIMD3<Double>, scale: SIMD3<Float>)] = [:]
+        for node in [b, el, er, fl, fr, e, r, c] {
+            let a = node.eulerAngles
+            bs[ObjectIdentifier(node)] = (node.simdPosition, SIMD3(Double(a.x), Double(a.y), Double(a.z)), node.simdScale)
+        }
+        var vc = SIMD3<Float>(0, 0, 1)
+        if let sphere = n("Core")?.childNodes.first(where: { $0.geometry != nil }) ?? n("Core") {
+            let (lo, hi) = sphere.boundingBox
+            vc = b.simdConvertPosition((SIMD3<Float>(lo) + SIMD3<Float>(hi)) / 2, from: sphere)
+        }
+        visor = vc; eyeRest = e.simdOrientation
+        bot = b; earL = el; earR = er; finL = fl; finR = fr; eye = e; ring = r; cursor = c
+        faces = fs; glow = g; base = bs
+        GrokRig.addProps(to: b, root: root, keyboard: keyboard, keys: &keys, keyOff: keyOff, ripple: ripple, flash: flash)
+
+    }
+    private static func addProps(to bot: SCNNode, root: SCNNode, keyboard: SCNNode, keys: inout [SCNNode], keyOff: SCNMaterial,
+                                 ripple: SCNNode, flash: SCNNode) {
+        // Holographic keyboard: a faint pane with three rows of glowing keys, tilted toward her.
+        let pane = SCNPlane(width: 1.08, height: 0.36)
+        pane.firstMaterial = Model3D.glowing(NSColor(srgbRed: 0.1, green: 0.45, blue: 0.8, alpha: 1), alpha: 0.45)
+        keyboard.addChildNode(SCNNode(geometry: pane))
+        for row in 0..<3 {
+            let n = row == 2 ? 7 : 9
+            for col in 0..<n {
+                let k = SCNNode(geometry: SCNBox(width: 0.085, height: 0.07, length: 0.012, chamferRadius: 0.006))
+                k.geometry?.firstMaterial = keyOff
+                k.simdPosition = [Float(Double(col) - Double(n - 1) / 2) * 0.108, Float(1 - row) * 0.11, 0.02]
+                keyboard.addChildNode(k)
+                keys.append(k)
+            }
+        }
+        keyboard.simdPosition = [0, -0.95, 0.3]
+        keyboard.simdOrientation = Model3D.quat([62, 0, 0])
+        keyboard.isHidden = true
+        bot.addChildNode(keyboard)
+        // Click ripple: a glowing ring facing her (an SCNTorus already stands in Blender's XZ plane here).
+        let torus = SCNTorus(ringRadius: 0.2, pipeRadius: 0.018)
+        torus.firstMaterial = Model3D.glowing(NSColor(srgbRed: 0.5, green: 0.95, blue: 1, alpha: 1), alpha: 0.9)
+        ripple.geometry = torus
+        ripple.isHidden = true
+        root.addChildNode(ripple)
+        // Shutter sparkle: four thin crossed bars.
+        let warm = Model3D.glowing(NSColor(srgbRed: 1, green: 1, blue: 0.9, alpha: 1))
+        for (k, (w, h)) in [(0.06, 0.34), (0.34, 0.06), (0.035, 0.2), (0.2, 0.035)].enumerated() {
+            let p = SCNPlane(width: w, height: h)
+            p.firstMaterial = warm
+            let bar = SCNNode(geometry: p)
+            bar.simdOrientation = Model3D.quat([90, k > 1 ? 45 : 0, 0])
+            flash.addChildNode(bar)
+        }
+        flash.isHidden = true
+        root.addChildNode(flash)
+    }
+
+    // MARK: Posing
+
+    private func place(_ node: SCNNode, _ p: Part3D) {
+        guard let b = base[ObjectIdentifier(node)] else { return }
+        node.simdPosition = b.pos + SIMD3<Float>(Float(p.at.x), Float(p.at.y), Float(p.at.z))
+        node.simdOrientation = Model3D.quat(b.rot * 180 / .pi + p.rot)
+        node.simdScale = b.scale * Float(p.scale)
+    }
+
+    func apply(_ p: Pose3D) {
+        SCNTransaction.begin(); SCNTransaction.disableActions = true
+        // Body: turn and lean about the core, then shift and squash.
+        if let b = base[ObjectIdentifier(bot)] {
+            let q = Model3D.quat(p.rot)
+            let l0 = SIMD3<Double>(Double(b.pos.x), Double(b.pos.y), Double(b.pos.z))
+            let rel = simd_act(simd_quatd(ix: Double(q.imag.x), iy: Double(q.imag.y), iz: Double(q.imag.z), r: Double(q.real)), l0 - GrokRig.core)
+            let pos = GrokRig.core + rel + SIMD3(p.move.x, 0, p.move.y)
+            bot.simdPosition = SIMD3<Float>(Float(pos.x), Float(pos.y), Float(pos.z))
+            bot.simdOrientation = q
+            bot.simdScale = [Float(1 + p.squash * 0.6), Float(1 + p.squash * 0.6), Float(1 - p.squash)]
+        }
+        place(earL, p.earL); place(earR, p.earR); place(finL, p.finL); place(finR, p.finR)
+        if let b = base[ObjectIdentifier(eye)] {
+            // Glance = roll the eyes over the visor: arc length glance.x across (about Blender Z), glance.y up (about X).
+            let off = b.pos - visor, r = max(0.2, simd_length(off))
+            let q = simd_quatf(angle: Float(p.glance.x) / r, axis: [0, 0, 1]) * simd_quatf(angle: -Float(p.glance.y) / r, axis: [1, 0, 0])
+            eye.simdPosition = visor + q.act(off)
+            eye.simdOrientation = q * eyeRest
+            eye.simdScale = [b.scale.x, b.scale.y, b.scale.z * Float(max(0.06, 1 - p.blink))]
+        }
+        for (name, f) in faces { f.isHidden = name != p.face }
+        if let b = base[ObjectIdentifier(ring)] {
+            ring.isHidden = !p.ring
+            ring.simdPosition = b.pos + SIMD3<Float>(Float(p.move.x), 0, 0)
+            ring.simdScale = b.scale * Float(p.ringScale)
+        }
+        glow?.emission.intensity = CGFloat(p.ringGlow)
+        if let c = p.cursor {
+            cursor.isHidden = false
+            cursor.simdPosition = [Float(c.x), Float(c.y), Float(c.z)]
+            cursor.simdScale = SIMD3(repeating: Float(c.w))
+        } else { cursor.isHidden = true }
+        keyboard.isHidden = p.keys == nil
+        if let lit = p.keys { for (i, k) in keys.enumerated() { k.geometry?.firstMaterial = lit.contains(i) ? keyOn : keyOff } }
+        if let r = p.ripple {
+            ripple.isHidden = false
+            ripple.simdPosition = [Float(r.x), Float(r.y), Float(r.z)]; ripple.simdScale = SIMD3(repeating: Float(r.w))
+        } else { ripple.isHidden = true }
+        if let s = p.shutter {
+            flash.isHidden = false
+            flash.simdPosition = [Float(s.x), Float(s.y), Float(s.z)]; flash.simdScale = SIMD3(repeating: Float(s.w))
+        } else { flash.isHidden = true }
+        SCNTransaction.commit()
+    }
+
 }
 
 // MARK: GrokBot's poses (ported from the Blender pose rows: same numbers, Blender axes)
