@@ -673,6 +673,7 @@ namespace Gloria {
                 string after = source == "claude" ? "重启 Claude Code 后，我就是它的分身啦。"
                              : source == "codex" ? "重启 Codex 后，我就是它的分身啦。Codex 若询问是否信任钩子，选信任即可。"
                              : source == "cursor" ? "新开一个 Cursor 对话就生效。"
+                             : source == "antigravity" ? "新开一次 Antigravity 对话（App、IDE 或 CLI）就生效。"
                              : "钩子已写入 ~/.dsh/hooks.json（DSH 需配置 hooks 桥接插件）。";
                 if (p != null) {
                     p.Play("wave", 1);
@@ -1039,8 +1040,8 @@ namespace Gloria {
         [STAThread]
         static int Main(string[] args) {
             try {
-                if (args.Length == 2 && (args[0] == "--gloria-hook" || args[0] == "--hook")) {
-                    return Events.Forward(args[1]);
+                if ((args.Length == 2 || args.Length == 3) && (args[0] == "--gloria-hook" || args[0] == "--hook")) {
+                    return Events.Forward(args[1], args.Length == 3 ? args[2] : null);
                 }
                 if (args.Length >= 1 && args[0] == "--ctl") {
                     string payload = args.Length >= 2 ? args[1] : "";

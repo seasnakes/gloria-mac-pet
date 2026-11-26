@@ -5,8 +5,8 @@ using System.Text;
 namespace Gloria {
     static class HookProgram {
         static int Main(string[] args) {
-            if (args.Length == 2 && (args[0] == "--gloria-hook" || args[0] == "--hook")) {
-                return Events.Forward(args[1]);
+            if ((args.Length == 2 || args.Length == 3) && (args[0] == "--gloria-hook" || args[0] == "--hook")) {
+                return Events.Forward(args[1], args.Length == 3 ? args[2] : null);
             }
             if (args.Length >= 1 && args[0] == "--ctl") {
                 string payload = args.Length >= 2 ? args[1] : "";

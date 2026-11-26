@@ -4,11 +4,13 @@ import AppKit
 
 let arguments = CommandLine.arguments
 if let i = arguments.firstIndex(of: "--hook") {
-    HookClient.run(source: i + 1 < arguments.count ? arguments[i + 1] : "claude")
+    let src = i + 1 < arguments.count ? arguments[i + 1] : "claude"
+    let ev = i + 2 < arguments.count ? arguments[i + 2] : nil
+    HookClient.run(source: src, eventHint: ev)
     exit(0)
 }
 if let i = arguments.firstIndex(of: "--hooks") {
-    // GLORIA --hooks claude|codex|cursor|dsh on|off   (same as the menu toggles)
+    // GLORIA --hooks claude|codex|cursor|dsh|antigravity on|off   (same as the menu toggles)
     let src = i + 1 < arguments.count ? arguments[i + 1] : "claude"
     let on = i + 2 < arguments.count ? arguments[i + 2] != "off" : true
     guard Agents.ids.contains(src) else { print("不认识 \(src)：可选 \(Agents.ids.joined(separator: " / "))"); exit(2) }

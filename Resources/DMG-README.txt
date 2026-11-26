@@ -13,14 +13,15 @@ GLORIA · Mac 桌宠
 需要
   macOS 14.2 或更新；Apple Silicon 和 Intel Mac 都可以。
 
-让她当 AI 编程助手的化身（Claude Code / Codex / Cursor / DSH）
-  第一次打开时，她会看看这台 Mac 上装了哪些（~/.claude、~/.codex、~/.cursor、~/.dsh），弹窗问你要接哪几个。
+让她当 AI 编程助手的化身（Claude Code / Codex / Cursor / DSH / Antigravity）
+  第一次打开时，她会看看这台 Mac 上装了哪些（~/.claude、~/.codex、~/.cursor、~/.dsh、~/.gemini/config），弹窗问你要接哪几个。
   勾上的会在对应的钩子文件里加入 GLORIA 的条目（改之前会备份），重开一次那个 agent 就生效：
     Claude Code  ~/.claude/settings.json
     Codex        ~/.codex/hooks.json      第一次会问要不要信任这些钩子，选信任
     Cursor       ~/.cursor/hooks.json     编辑器和 cursor-agent 都算，新开对话就生效
     DSH          ~/.dsh/hooks.json        DSH 还要装官方 hooks 桥接插件 @deepseek-ai/dsh-hooks-claude-code
                                           （连同 dsh-hook-protocol），configPath 指向这个文件；命令见项目主页
+    Antigravity  ~/.gemini/config/hooks.json  Antigravity App / IDE / CLI 共用，新开对话就生效
   以后随时在菜单 ›「<名字> 化身」› 接入 里开关。挪动过 App 的位置后重新打开一次，钩子会自动指向新位置。
 
 卸载

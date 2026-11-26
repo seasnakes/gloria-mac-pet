@@ -37,7 +37,7 @@ enum Prefs {
     static var dance: Bool { get { bool("dance", true) } set { d.set(newValue, forKey: "dance") } }
     static var beatTap: Bool { get { bool("beatTap", true) } set { d.set(newValue, forKey: "beatTap") } }
     static var browserMusic: Bool { get { bool("browserMusic", true) } set { d.set(newValue, forKey: "browserMusic") } }
-    /// Whether her hooks are in this agent's config ("claude", "codex", "cursor", "dsh"). The first two keep their old keys.
+    /// Whether her hooks are in this agent's config ("claude", "codex", "cursor", "dsh", "antigravity"). The first two keep their old keys.
     static func husk(_ src: String) -> Bool { bool(huskKey(src), false) }
     static func setHusk(_ src: String, _ on: Bool) { d.set(on, forKey: huskKey(src)); d.synchronize() }
     private static func huskKey(_ src: String) -> String { ["claude": "huskClaude", "codex": "huskCodex"][src] ?? "husk.\(src)" }
@@ -74,6 +74,7 @@ enum Agents {
         Info(id: "codex", name: "Codex", tag: "CODEX", home: ".codex"),
         Info(id: "cursor", name: "Cursor", tag: "CURSOR", home: ".cursor"),
         Info(id: "dsh", name: "DeepSeek Harness", tag: "DSH", home: ".dsh"),
+        Info(id: "antigravity", name: "Antigravity", tag: "ANTIGRAVITY", home: ".gemini/config"),
     ]
     static let ids = all.map(\.id)
     static func info(_ id: String) -> Info { all.first { $0.id == id } ?? all[0] }
@@ -83,8 +84,14 @@ enum Agents {
     static var on: [String] { ids.filter { Prefs.husk($0) } }
     /// Installed on this Mac (its config folder exists).
     static func present(_ id: String) -> Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(info(id).home)
-        return FileManager.default.fileExists(atPath: home.path)
+        let fm = FileManager.default
+        let root = fm.homeDirectoryForCurrentUser
+        if id == "antigravity" {
+            if let env = ProcessInfo.processInfo.environment["ANTIGRAVITY_CONFIG_DIR"], !env.isEmpty, fm.fileExists(atPath: env) { return true }
+            return [".gemini/config", ".gemini/antigravity", ".gemini/antigravity-ide", ".gemini/antigravity-cli"]
+                .contains { fm.fileExists(atPath: root.appendingPathComponent($0).path) }
+        }
+        return fm.fileExists(atPath: root.appendingPathComponent(info(id).home).path)
     }
 }
 

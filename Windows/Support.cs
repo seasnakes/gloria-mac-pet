@@ -225,7 +225,8 @@ namespace Gloria {
                 { "claude", "usagi" },
                 { "codex", "doro" },
                 { "cursor", "gloria" },
-                { "dsh", "grokbot" }
+                { "dsh", "grokbot" },
+                { "antigravity", "fourteen" }
             };
         }
 
@@ -235,7 +236,7 @@ namespace Gloria {
             if (Positions == null) Positions = new Dictionary<string, double[]>();
             if (Roles == null) Roles = new Dictionary<string, string>();
             var defaults = new Dictionary<string, string> {
-                { "claude", "usagi" }, { "codex", "doro" }, { "cursor", "gloria" }, { "dsh", "grokbot" }
+                { "claude", "usagi" }, { "codex", "doro" }, { "cursor", "gloria" }, { "dsh", "grokbot" }, { "antigravity", "fourteen" }
             };
             foreach (var kv in defaults) {
                 if (!Roles.ContainsKey(kv.Key) || String.IsNullOrEmpty(Roles[kv.Key])) Roles[kv.Key] = kv.Value;

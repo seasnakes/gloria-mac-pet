@@ -66,7 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         box.alignment = .leading
         var checks: [(String, NSButton)] = []
         for info in found {
-            let note = ["codex": "（之后 Codex 会问一次要不要信任钩子）", "dsh": "（还要给它装 hooks 插件，见 README）"][info.id] ?? ""
+            let note = ["codex": "（之后 Codex 会问一次要不要信任钩子）",
+                        "dsh": "（还要给它装 hooks 插件，见 README）",
+                        "antigravity": "（App、IDE 和 CLI 通用）"][info.id] ?? ""
             let c = NSButton(checkboxWithTitle: info.name + note, target: nil, action: nil)
             c.state = .on
             box.addArrangedSubview(c)
@@ -400,7 +402,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let after = ["claude": "重启 Claude Code 后，我就是它的分身啦。",
                          "codex": "重启 Codex 后，我就是它的分身啦。Codex 会问要不要信任这些钩子，选信任。",
                          "cursor": "新开一个 Cursor 对话（编辑器或 cursor-agent）就生效。",
-                         "dsh": "钩子写进 ~/.dsh/hooks.json 了。DeepSeek Harness 还要装一个 hooks 插件来读它，命令在 README 里。"][src] ?? ""
+                         "dsh": "钩子写进 ~/.dsh/hooks.json 了。DeepSeek Harness 还要装一个 hooks 插件来读它，命令在 README 里。",
+                         "antigravity": "新开一次 Antigravity 对话（App、IDE 或 CLI）就生效。"][src] ?? ""
             p.say(on ? "好了！" + after : "已经从 \(app) 里拿掉我的钩子。", tag: Agents.tag(src), duration: src == "dsh" ? 8 : 6)
         } catch {
             p.say("没设置成功：\(error)", duration: 6)

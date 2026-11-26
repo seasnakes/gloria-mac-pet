@@ -15,7 +15,7 @@ namespace Gloria {
         internal const int WM_COPYDATA = 0x4a;
         internal const int TagLegacy = 0x474c52;
         internal const int TagJson = 0x474c53;
-        internal static readonly string[] Sources = { "claude", "codex", "cursor", "dsh" };
+        internal static readonly string[] Sources = { "claude", "codex", "cursor", "dsh", "antigravity" };
 
         internal static string Address {
             get {
@@ -56,15 +56,291 @@ namespace Gloria {
             "error", "error_message", "is_interrupt", "prompt", "message", "title",
             "notification_type", "last_assistant_message", "text", "agent_id", "subagent_id",
             "agent_type", "subagent_type", "source", "reason", "trigger",
-            "stop_hook_active", "final_status", "status"
+            "stop_hook_active", "final_status", "status", "fully_idle"
         };
 
         static readonly HashSet<string> KeepInputKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "file_path", "filePath", "file_paths", "path", "command", "cmd", "pattern",
             "url", "query", "queries", "description", "subagent_type", "notebook_path",
-            "questions", "code", "title", "action", "coordinate", "start_coordinate",
-            "scroll_direction", "key", "app"
+            "questions", "focus", "code", "title", "action", "coordinate", "start_coordinate",
+            "scroll_direction", "key", "app", "x", "y"
         };
+
+        static readonly Dictionary<string, string> AntigravityToolMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            { "view_file", "Read" }, { "read_file", "Read" }, { "view_file_outline", "Read" }, { "view_code_item", "Read" }, { "read_terminal", "Read" },
+            { "write_to_file", "Write" }, { "write_file", "Write" },
+            { "replace_file_content", "Edit" }, { "multi_replace_file_content", "Edit" }, { "edit_file", "Edit" },
+            { "run_command", "Bash" }, { "send_command_input", "Bash" },
+            { "grep_search", "Grep" }, { "codebase_search", "Grep" },
+            { "find_by_name", "Glob" }, { "list_dir", "Glob" },
+            { "search_web", "WebSearch" }, { "read_url_content", "WebFetch" }, { "view_content_chunk", "WebFetch" },
+            { "update_steps", "TodoWrite" }, { "schedule", "TodoWrite" },
+            { "invoke_subagent", "Agent" }, { "define_subagent", "Agent" }, { "send_message", "Agent" }, { "manage_subagents", "Agent" }
+        };
+
+        internal static string AntigravityEventName(Dictionary<string, object> e, string eventHint) {
+            string ev = Field(e, "hookEventName");
+            if (!String.IsNullOrEmpty(ev)) return ev;
+            if (!String.IsNullOrEmpty(eventHint)) return eventHint;
+            if (e != null && (e.ContainsKey("terminationReason") || e.ContainsKey("fullyIdle") || e.ContainsKey("executionNum"))) return "Stop";
+            if (e != null && e.ContainsKey("toolCall")) return !String.IsNullOrEmpty(Field(e, "error")) ? "PostToolUse" : "PreToolUse";
+            if (e != null && e.ContainsKey("invocationNum")) return "PreInvocation";
+            return "SessionStart";
+        }
+
+        static object FirstPresent(Dictionary<string, object> d, params string[] keys) {
+            if (d == null) return null;
+            for (int i = 0; i < keys.Length; i++) {
+                object v;
+                if (d.TryGetValue(keys[i], out v) && v != null) {
+                    string s = v as string;
+                    if (s == null || s != "") return v;
+                }
+            }
+            return null;
+        }
+
+        static string LastAntigravityReply(string transcriptPath) {
+            if (String.IsNullOrEmpty(transcriptPath)) return "";
+            try {
+                string path = transcriptPath;
+                if (path.StartsWith("~/", StringComparison.Ordinal) || path.StartsWith(@"~\", StringComparison.Ordinal)) {
+                    path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path.Substring(2));
+                }
+                if (!File.Exists(path)) return "";
+                byte[] buf;
+                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
+                    long len = fs.Length;
+                    if (len <= 0) return "";
+                    int take = (int)Math.Min(65536L, len);
+                    fs.Seek(len - take, SeekOrigin.Begin);
+                    buf = new byte[take];
+                    int read = 0;
+                    while (read < take) {
+                        int n = fs.Read(buf, read, take - read);
+                        if (n <= 0) break;
+                        read += n;
+                    }
+                    if (read < take) {
+                        var slimBuf = new byte[read];
+                        Buffer.BlockCopy(buf, 0, slimBuf, 0, read);
+                        buf = slimBuf;
+                    }
+                }
+                string text = Encoding.UTF8.GetString(buf);
+                string[] lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                var ser = new JavaScriptSerializer { MaxJsonLength = 2 * 1024 * 1024 };
+                for (int i = lines.Length - 1; i >= 0; i--) {
+                    Dictionary<string, object> obj;
+                    try { obj = ser.Deserialize<Dictionary<string, object>>(lines[i]); } catch { continue; }
+                    if (obj == null) continue;
+                    string kind = Field(obj, "type");
+                    if (kind == "USER_INPUT") break;
+                    if (kind == "PLANNER_RESPONSE") {
+                        string content = Field(obj, "content").Trim();
+                        if (!String.IsNullOrEmpty(content)) return CapStr(content, 1200);
+                    }
+                }
+            } catch { }
+            return "";
+        }
+
+        internal static Dictionary<string, object> NormalizeAntigravity(Dictionary<string, object> e, string eventHint) {
+            if (e == null) return null;
+            string name = AntigravityEventName(e, eventHint);
+            var o = new Dictionary<string, object>();
+            string cid = Field(e, "conversationId");
+            if (cid == "") cid = Field(e, "session_id");
+            if (cid == "") cid = "default";
+            o["session_id"] = "antigravity:" + cid;
+            string cwd = Field(e, "cwd");
+            if (cwd == "") {
+                object wsObj;
+                var ws = e.TryGetValue("workspacePaths", out wsObj) ? wsObj as IList : null;
+                if (ws != null && ws.Count > 0 && ws[0] != null) cwd = ws[0].ToString();
+            }
+            if (cwd != "") o["cwd"] = cwd;
+
+            if (name == "SessionStart") {
+                o["hook_event_name"] = "SessionStart";
+                o["source"] = "startup";
+                return o;
+            }
+            if (name == "PreInvocation") {
+                o["hook_event_name"] = "PreInvocation";
+                o["prompt"] = Field(e, "lastUserInput");
+                return o;
+            }
+            if (name == "PreToolUse" || name == "PostToolUse") {
+                object tcObj, argsObj, stepObj;
+                var tc = e.TryGetValue("toolCall", out tcObj) ? tcObj as Dictionary<string, object> : null;
+                string rawTool = tc != null ? Field(tc, "name") : Field(e, "tool_name");
+                string lower = rawTool.ToLowerInvariant();
+                var args = tc != null && tc.TryGetValue("args", out argsObj) ? argsObj as Dictionary<string, object>
+                         : (e.TryGetValue("tool_input", out argsObj) ? argsObj as Dictionary<string, object> : null);
+                string tid = tc != null ? Field(tc, "id") : Field(e, "tool_use_id");
+                if (tid == "" && e.TryGetValue("stepIdx", out stepObj) && stepObj != null) tid = "step:" + stepObj.ToString();
+                if (tid != "") o["tool_use_id"] = tid;
+                string err = Field(e, "error");
+                if (err != "") o["error"] = err;
+
+                if (name == "PreToolUse") {
+                    if (lower == "ask_question") {
+                        o["hook_event_name"] = "Notification";
+                        o["notification_type"] = "agent_needs_input";
+                        string q = "";
+                        object qsObj;
+                        var qs = args != null && args.TryGetValue("questions", out qsObj) ? qsObj as IList : null;
+                        if (qs != null && qs.Count > 0) {
+                            var firstQ = qs[0] as Dictionary<string, object>;
+                            if (firstQ != null) q = Field(firstQ, "question");
+                        }
+                        o["message"] = String.IsNullOrEmpty(q) ? "Antigravity 想问你几个问题。" : q;
+                        return o;
+                    }
+                    if (lower == "ask_permission") {
+                        o["hook_event_name"] = "Notification";
+                        o["notification_type"] = "permission_prompt";
+                        string reason = Field(args, "Reason");
+                        if (reason == "") reason = Field(args, "reason");
+                        string act = Field(args, "Action");
+                        if (act == "") act = Field(args, "action");
+                        string tgt = Field(args, "Target");
+                        if (tgt == "") tgt = Field(args, "target");
+                        string desc = !String.IsNullOrEmpty(reason) ? reason : (act + " " + tgt).Trim();
+                        o["message"] = String.IsNullOrEmpty(desc) ? "需要你批准操作" : desc;
+                        return o;
+                    }
+                    object blkObj;
+                    if (lower == "notify_user" && args != null && args.TryGetValue("BlockedOnUser", out blkObj) && Object.Equals(blkObj, true)) {
+                        o["hook_event_name"] = "Notification";
+                        o["notification_type"] = "agent_needs_input";
+                        string msg = Field(args, "Message");
+                        o["message"] = String.IsNullOrEmpty(msg) ? "等待你的回复" : msg;
+                        return o;
+                    }
+                    if (lower == "invoke_subagent") {
+                        o["hook_event_name"] = "SubagentStart";
+                        o["agent_id"] = tid != "" ? tid : Guid.NewGuid().ToString("N");
+                        string role = Field(args, "Role");
+                        if (role == "") role = Field(args, "TypeName");
+                        if (role == "" && args != null) {
+                            object subsObj;
+                            var subs = args.TryGetValue("Subagents", out subsObj) ? subsObj as IList : null;
+                            if (subs != null && subs.Count > 0) {
+                                var firstSub = subs[0] as Dictionary<string, object>;
+                                if (firstSub != null) {
+                                    role = Field(firstSub, "Role");
+                                    if (role == "") role = Field(firstSub, "TypeName");
+                                }
+                            }
+                        }
+                        o["agent_type"] = role;
+                        return o;
+                    }
+                    if (lower == "swarm" && String.Equals(Field(args, "action"), "add", StringComparison.OrdinalIgnoreCase)) {
+                        o["hook_event_name"] = "SubagentStart";
+                        string wn = Field(args, "name");
+                        if (wn == "") wn = "swarm";
+                        o["agent_id"] = wn;
+                        o["agent_type"] = wn;
+                        return o;
+                    }
+                } else if (err == "") {
+                    if (lower == "swarm" && String.Equals(Field(args, "action"), "kill", StringComparison.OrdinalIgnoreCase)) {
+                        o["hook_event_name"] = "SubagentStop";
+                        string wn = Field(args, "name");
+                        if (wn != "") o["agent_id"] = wn;
+                        return o;
+                    }
+                    if (lower == "manage_subagents") {
+                        string act = Field(args, "Action").ToLowerInvariant();
+                        if (act == "kill_all") {
+                            o["hook_event_name"] = "SubagentStop";
+                            return o;
+                        }
+                        if (act == "kill") {
+                            o["hook_event_name"] = "SubagentStop";
+                            object idsObj;
+                            var ids = args != null && args.TryGetValue("ConversationIds", out idsObj) ? idsObj as IList : null;
+                            if (ids != null && ids.Count > 0 && ids[0] != null) o["agent_id"] = ids[0].ToString();
+                            return o;
+                        }
+                    }
+                }
+
+                o["hook_event_name"] = name;
+                string mappedTool;
+                if (!AntigravityToolMap.TryGetValue(lower, out mappedTool)) {
+                    if (lower.StartsWith("mcp__", StringComparison.Ordinal)) mappedTool = rawTool;
+                    else if (lower.StartsWith("mcp_", StringComparison.Ordinal)) mappedTool = "mcp__" + rawTool.Substring(4);
+                    else if (rawTool.IndexOf(':') >= 0) mappedTool = "mcp__" + rawTool.Replace(":", "__");
+                    else mappedTool = rawTool;
+                }
+                o["tool_name"] = mappedTool;
+
+                var i = new Dictionary<string, object>();
+                object fp = FirstPresent(args, "AbsolutePath", "TargetFile", "Path", "file_path", "path");
+                if (fp != null) i["file_path"] = fp;
+                object cmd = FirstPresent(args, "CommandLine", "command", "cmd", "Input");
+                if (cmd != null) i["command"] = cmd;
+                object pat = FirstPresent(args, "Query", "Pattern", "pattern");
+                if (pat != null) {
+                    i["pattern"] = pat;
+                } else {
+                    object dirObj = FirstPresent(args, "DirectoryPath", "SearchDirectory");
+                    string dirStr = dirObj as string;
+                    if (!String.IsNullOrEmpty(dirStr)) {
+                        string[] parts = dirStr.Replace('\\', '/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                        i["pattern"] = parts.Length > 0 ? parts[parts.Length - 1] : dirStr;
+                    }
+                }
+                object qv = FirstPresent(args, "query", "Query");
+                if (qv != null) i["query"] = qv;
+                object uv = FirstPresent(args, "Url", "url");
+                if (uv != null) i["url"] = uv;
+                object dv = FirstPresent(args, "Description", "toolSummary", "description");
+                if (dv != null) i["description"] = dv;
+                object fv = FirstPresent(args, "focus", "Focus");
+                if (fv != null) i["focus"] = fv;
+                object stv = FirstPresent(args, "TypeName", "subagent_type");
+                if (stv != null) i["subagent_type"] = stv;
+                object kv = FirstPresent(args, "key", "Key");
+                if (kv != null) i["key"] = kv;
+                object av = FirstPresent(args, "action", "Action");
+                if (av != null) i["action"] = av;
+                object cv = FirstPresent(args, "coordinate");
+                if (cv != null) i["coordinate"] = cv;
+                object xv = FirstPresent(args, "x", "X");
+                if (xv != null) i["x"] = xv;
+                object yv = FirstPresent(args, "y", "Y");
+                if (yv != null) i["y"] = yv;
+                object tv = FirstPresent(args, "text", "Text", "value", "Value");
+                if (tv is string) i["text"] = tv;
+                if (i.Count > 0) o["tool_input"] = i;
+                return o;
+            }
+            if (name == "Stop") {
+                string reason = Field(e, "terminationReason").ToLowerInvariant();
+                string err = Field(e, "error");
+                object idleObj;
+                if (e.TryGetValue("fullyIdle", out idleObj) && idleObj is bool) o["fully_idle"] = idleObj;
+                if (!String.IsNullOrEmpty(err) || reason == "error") {
+                    o["hook_event_name"] = "StopFailure";
+                    o["error"] = err;
+                } else {
+                    o["hook_event_name"] = "Stop";
+                    if (reason == "user_canceled" || reason == "cancelled" || reason == "aborted") {
+                        o["reason"] = "user_canceled";
+                    } else {
+                        string reply = LastAntigravityReply(Field(e, "transcriptPath"));
+                        if (!String.IsNullOrEmpty(reply)) o["last_assistant_message"] = reply;
+                    }
+                }
+                return o;
+            }
+            return null;
+        }
 
         static readonly HashSet<string> StripKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "content", "old_string", "new_string", "new_source", "edits"
@@ -107,6 +383,13 @@ namespace Gloria {
 
         // Slims incoming hook JSON (never forwards raw file contents or typed passwords).
         internal static Dictionary<string, object> Slim(string source, Dictionary<string, object> e) {
+            return Slim(source, e, null);
+        }
+
+        internal static Dictionary<string, object> Slim(string source, Dictionary<string, object> e, string eventHint) {
+            if (source == "antigravity" && e != null) {
+                e = NormalizeAntigravity(e, eventHint);
+            }
             if (e == null || String.IsNullOrEmpty(Field(e, "hook_event_name"))) return null;
             var o = new Dictionary<string, object>();
             o["_source"] = source;
@@ -246,7 +529,13 @@ namespace Gloria {
         }
 
         internal static int Forward(string source) {
-            string reply = "{\"permission\":\"allow\"}";
+            return Forward(source, null);
+        }
+
+        internal static int Forward(string source, string eventHint) {
+            string reply = source == "antigravity"
+                ? ((eventHint == "PreToolUse" || eventHint == "Stop") ? "{\"decision\":\"allow\"}" : "{}")
+                : "{\"permission\":\"allow\"}";
             try {
                 if (Array.IndexOf(Sources, source) < 0) return 2;
                 using (var reader = new StreamReader(Console.OpenStandardInput(), Encoding.UTF8, true)) {
@@ -255,15 +544,20 @@ namespace Gloria {
                     int n;
                     while ((n = reader.Read(buf, 0, buf.Length)) > 0) {
                         if (text.Length + n > 4 * 1024 * 1024) {
-                            if (source == "cursor") Console.WriteLine(reply);
+                            if (source == "cursor" || source == "antigravity") Console.WriteLine(reply);
                             return 0;
                         }
                         text.Append(buf, 0, n);
                     }
                     var serializer = new JavaScriptSerializer { MaxJsonLength = 8 * 1024 * 1024 };
                     var e = serializer.Deserialize<Dictionary<string, object>>(text.ToString());
-                    if (Field(e, "hook_event_name") != "preToolUse") reply = "{}";
-                    var slimmed = Slim(source, e);
+                    if (source == "antigravity") {
+                        string agEv = AntigravityEventName(e, eventHint);
+                        reply = (agEv == "PreToolUse" || agEv == "Stop") ? "{\"decision\":\"allow\"}" : "{}";
+                    } else if (Field(e, "hook_event_name") != "preToolUse") {
+                        reply = "{}";
+                    }
+                    var slimmed = Slim(source, e, eventHint);
                     if (slimmed != null) {
                         string json = serializer.Serialize(slimmed);
                         if (json.Length <= 28000) SendJson(json);
@@ -272,7 +566,7 @@ namespace Gloria {
             } catch {
                 // An observer must never interrupt an agent's tool call.
             }
-            if (source == "cursor") Console.WriteLine(reply);
+            if (source == "cursor" || source == "antigravity") Console.WriteLine(reply);
             return 0;
         }
     }

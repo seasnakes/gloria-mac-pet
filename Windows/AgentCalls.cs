@@ -10,13 +10,15 @@ namespace Gloria {
             { "codex", new[] { "help", "login", "logout", "mcp", "mcp-server", "completion", "features", "apply", "debug" } },
             { "claude", new[] { "help", "mcp", "config", "doctor", "update", "install", "migrate-installer", "setup-token", "plugin", "auth" } },
             { "cursor", new[] { "help", "--list-models", "models", "login", "logout", "status", "update", "mcp", "ls" } },
-            { "dsh", new[] { "help", "plugin", "config", "login", "logout", "update", "doctor" } }
+            { "dsh", new[] { "help", "plugin", "config", "login", "logout", "update", "doctor" } },
+            { "antigravity", new[] { "help", "login", "logout", "auth", "plugin", "plugins", "mcp", "models", "agents", "config", "settings", "update", "upgrade", "doctor", "version", "completion", "status", "hooks", "skills", "mic-serve" } }
         };
 
         static readonly Regex QuotedRegex = new Regex("[\"“']([^\"”']{4,})[\"”']", RegexOptions.Compiled);
 
         static string Agent(string name) {
             if (name == "cursor-agent") return "cursor";
+            if (name == "agy") return "antigravity";
             return Administrative.ContainsKey(name) ? name : "";
         }
 
@@ -51,15 +53,20 @@ namespace Gloria {
             if (String.IsNullOrEmpty(tool)) return "";
             string lowTool = tool.ToLowerInvariant();
             string mcp = lowTool.Replace("mcp:", "mcp__").Replace(':', '_');
+            if (!mcp.StartsWith("mcp__") && mcp.StartsWith("mcp_")) mcp = "mcp__" + mcp.Substring(4);
             if (mcp.StartsWith("mcp__") || lowTool == "agent" || lowTool == "task" || lowTool == "subagent" || lowTool == "subagent_fork") {
                 string hint = mcp.StartsWith("mcp__") ? mcp.Substring(5) : Events.Field(input, "subagent_type").ToLowerInvariant();
                 foreach (string other in Events.Sources) {
-                    if (other != source && Regex.IsMatch(hint, @"(^|[^a-z0-9])" + other + @"([^a-z0-9]|$)")) return other;
+                    if (other == source) continue;
+                    if (Regex.IsMatch(hint, @"(^|[^a-z0-9])" + other + @"([^a-z0-9]|$)")) return other;
+                    if (other == "antigravity" && Regex.IsMatch(hint, @"(^|[^a-z0-9])agy([^a-z0-9]|$)")) return other;
                 }
             }
-            if (!(new[] { "bash", "powershell", "pwsh", "shell", "exec", "exec_command", "shell_command" }.Contains(lowTool))) return "";
+            if (!(new[] { "bash", "powershell", "pwsh", "shell", "exec", "exec_command", "shell_command", "run_command", "send_command_input" }.Contains(lowTool))) return "";
             string cmd = Events.Field(input, "command");
             if (cmd == "") cmd = Events.Field(input, "cmd");
+            if (cmd == "") cmd = Events.Field(input, "CommandLine");
+            if (cmd == "") cmd = Events.Field(input, "Input");
             if (cmd == "") return "";
             foreach (var words in Commands(cmd)) {
                 int i = 0;
@@ -73,7 +80,7 @@ namespace Gloria {
                 if (i == words.Count) continue;
                 string exe = Executable(words[i]);
                 if (exe == "$codex" || exe == "${codex}") exe = "codex";
-                if (exe == "cursor") continue; // GUI editor, not cursor-agent
+                if (exe == "cursor" || exe == "antigravity") continue; // GUI app, not cursor-agent / agy
                 string agent = Agent(exe);
                 if (agent == "" || agent == source) continue;
                 string arg = i + 1 < words.Count ? words[i + 1].ToLowerInvariant() : "";
@@ -87,6 +94,7 @@ namespace Gloria {
             if (input == null) return "";
             string s = Events.Field(input, "command");
             if (s == "") s = Events.Field(input, "cmd");
+            if (s == "") s = Events.Field(input, "CommandLine");
             if (s == "") s = Events.Field(input, "description");
             if (s == "") s = Events.Field(input, "prompt");
             var matches = QuotedRegex.Matches(s);

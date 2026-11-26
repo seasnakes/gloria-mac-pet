@@ -140,18 +140,24 @@ enum AgentCalls {
     private static let claude = re(lead + #"(?:\S*/)?claude(?=\s|$)(?!\s+(?:--version|-v|--help|-h|mcp|config|doctor|update|install|migrate-installer|setup-token|plugin|auth)\b)"#)
     private static let cursor = re(lead + #"(?:\S*/)?cursor-agent(?=\s|$)(?!\s+(?:--version|-v|--help|-h|--list-models|models|login|logout|status|update|mcp|ls)\b)"#)
     private static let dsh = re(lead + #"(?:\S*/)?dsh(?=\s|$)(?!\s+(?:--version|-v|--help|-h|plugin|config|login|logout|update|doctor)\b)"#)
+    private static let antigravity = re(lead + #"(?:\S*/)?agy(?=\s|$)(?!\s+(?:--version|-v|-V|--help|-h|help|login|logout|auth|plugin|plugins|mcp|models|agents|config|settings|update|upgrade|doctor|version|completion|status|hooks|skills|mic-serve)\b)"#)
     private static let quoted = re(#"["“']([^"”']{4,})["”']"#)
 
     /// The agent this tool call reaches out to (another of Agents.ids), if any.
     static func callee(from src: String, tool: String, input: [String: Any]) -> String? {
         let t = tool.lowercased()
+        func mentions(_ text: String, _ other: String) -> Bool {
+            if text.contains(other) { return true }
+            guard other == "antigravity" else { return false }
+            return text.split { !$0.isLetter && !$0.isNumber }.contains("agy")
+        }
         for other in Agents.ids where other != src {
-            if t.hasPrefix("mcp__") && t.contains(other) { return other }
-            if t == "task" || t == "agent", ((input["subagent_type"] as? String) ?? "").lowercased().contains(other) { return other }
+            if t.hasPrefix("mcp__") && mentions(t, other) { return other }
+            if t == "task" || t == "agent", mentions(((input["subagent_type"] as? String) ?? "").lowercased(), other) { return other }
         }
         guard tool == "Bash", let cmd = input["command"] as? String else { return nil }
         let range = NSRange(cmd.startIndex..., in: cmd)
-        for (other, r) in [("codex", codex), ("claude", claude), ("cursor", cursor), ("dsh", dsh)] where other != src {
+        for (other, r) in [("codex", codex), ("claude", claude), ("cursor", cursor), ("dsh", dsh), ("antigravity", antigravity)] where other != src {
             if r.firstMatch(in: cmd, range: range) != nil { return other }
         }
         return nil

@@ -72,7 +72,62 @@ enum ComputerUse {
             }
             return acts.isEmpty ? nil : (nil, acts)
         }
+        // Antigravity browser tools (`browser_*`, `*_browser_*`) and Chrome DevTools / Playwright MCP tools.
+        if let br = browser(tool: t, input: input) { return br }
         return nil
+    }
+
+    private static func browser(tool t: String, input: [String: Any]) -> (app: String?, acts: [CUAction])? {
+        let action: String
+        var appHint: String? = nil
+        if t.hasPrefix("mcp__chrome-devtools__") {
+            action = String(t.dropFirst("mcp__chrome-devtools__".count))
+            if window(for: "Google Chrome") != nil { appHint = "Google Chrome" }
+        } else if t.hasPrefix("mcp__chrome_devtools__") {
+            action = String(t.dropFirst("mcp__chrome_devtools__".count))
+            if window(for: "Google Chrome") != nil { appHint = "Google Chrome" }
+        } else if t.hasPrefix("mcp__playwright__") {
+            action = String(t.dropFirst("mcp__playwright__".count))
+        } else if t.hasPrefix("browser_") {
+            action = String(t.dropFirst("browser_".count))
+        } else if t.contains("_browser_") || t.hasSuffix("_browser") {
+            action = t
+        } else {
+            return nil
+        }
+        let pt: CGPoint? = {
+            if let c = input["coordinate"] as? [NSNumber], c.count >= 2 {
+                return CGPoint(x: c[0].doubleValue, y: c[1].doubleValue)
+            }
+            if let x = (input["x"] as? NSNumber)?.doubleValue, let y = (input["y"] as? NSNumber)?.doubleValue {
+                return CGPoint(x: x, y: y)
+            }
+            return nil
+        }()
+        let act: CUAction?
+        switch action {
+        case "click", "click_pixel", "click_browser_pixel", "left_click":
+            act = CUAction(kind: .tap, point: pt)
+        case "double_click", "dblclick":
+            act = CUAction(kind: .double, point: pt)
+        case "right_click":
+            act = CUAction(kind: .right, point: pt)
+        case "type", "type_text", "type_browser", "fill", "fill_form", "input", "enter_text":
+            act = CUAction(kind: .type, point: pt, count: input["text_len"] as? Int)
+        case "key", "press_key", "key_press", "press":
+            act = CUAction(kind: .key, keys: pretty((input["key"] as? String) ?? (input["text"] as? String) ?? ""))
+        case "scroll", "scroll_page", "scroll_browser", "scroll_down", "scroll_up":
+            act = CUAction(kind: .scroll, point: pt)
+        case "drag", "drag_drop", "drag_browser":
+            act = CUAction(kind: .drag, point: pt)
+        case "screenshot", "take_screenshot", "capture_screenshot", "capture_browser_screenshot", "snapshot", "take_snapshot", "read_dom":
+            act = CUAction(kind: .snap)
+        case "navigate", "navigate_page", "open_url", "open_browser_url", "goto", "new_page", "open":
+            act = CUAction(kind: .open)
+        default:
+            act = nil
+        }
+        return act.map { (appHint, [$0]) }
     }
 
     /// Clicks that move the real pointer (desktop computer use): the ripple can go where the pointer ends up.

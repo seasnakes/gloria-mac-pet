@@ -13,6 +13,7 @@ namespace Gloria {
             internal bool Busy;
             internal string Awaiting;
             internal string LastTool = "";
+            internal string LastPrompt = "";
             internal double LastAt = Clock.Now;
             internal string Reply = "";
         }
@@ -102,6 +103,10 @@ namespace Gloria {
         }
 
         static Dictionary<string, object> AdaptEvent(Dictionary<string, object> raw, string source) {
+            if (source == "antigravity" && String.IsNullOrEmpty(Events.Field(raw, "hook_event_name"))) {
+                raw = Events.NormalizeAntigravity(raw, null);
+                if (raw == null) return null;
+            }
             string rawEv = Events.Field(raw, "hook_event_name");
             if (String.IsNullOrEmpty(rawEv)) return null;
 
@@ -256,7 +261,20 @@ namespace Gloria {
                     s.Awaiting = null;
                     pet.Play("jump", 1);
                     string p = Calc.Cap(Events.Field(e, "prompt"), 26);
+                    if (!String.IsNullOrEmpty(p)) s.LastPrompt = p;
                     pet.Say(String.IsNullOrEmpty(p) ? (w + " 接活了！") : (w + " 接活了：「" + p + "」"), tg, BubbleKind.Speech, 3.2, false);
+                    break;
+                }
+                case "PreInvocation": {
+                    string p = Calc.Cap(Events.Field(e, "prompt"), 26);
+                    bool isNewTurn = !s.Busy || (!String.IsNullOrEmpty(p) && p != s.LastPrompt);
+                    s.Busy = true;
+                    s.Awaiting = null;
+                    if (isNewTurn) {
+                        if (!String.IsNullOrEmpty(p)) s.LastPrompt = p;
+                        pet.Play("jump", 1);
+                        pet.Say(String.IsNullOrEmpty(p) ? (w + " 接活了！") : (w + " 接活了：「" + p + "」"), tg, BubbleKind.Speech, 3.2, false);
+                    }
                     break;
                 }
                 case "PreToolUse": {
@@ -323,7 +341,9 @@ namespace Gloria {
                     string ntype = Events.Field(e, "notification_type").ToLowerInvariant();
                     string msg = Events.Field(e, "message");
                     if (ntype == "permission_prompt" || msg.IndexOf("permission", StringComparison.OrdinalIgnoreCase) >= 0) {
-                        string what = !String.IsNullOrEmpty(s.LastTool) ? AskingPhrase(s.LastTool) : Calc.Cap(String.IsNullOrEmpty(msg) ? "执行操作" : msg, 60);
+                        string what = (src == "antigravity" && !String.IsNullOrEmpty(msg))
+                            ? Calc.Cap(msg, 60)
+                            : (!String.IsNullOrEmpty(s.LastTool) ? AskingPhrase(s.LastTool) : Calc.Cap(String.IsNullOrEmpty(msg) ? "执行操作" : msg, 60));
                         s.Awaiting = what;
                         RefreshPetsFromSessions();
                         pet.Say(w + " 需要你批准：" + what, tg, BubbleKind.Alert, null, true);
@@ -357,7 +377,19 @@ namespace Gloria {
                     string reply = Events.Field(e, "last_assistant_message");
                     if (reply == "") reply = s.Reply;
                     s.Reply = "";
-                    NotifyDone(pet, w, tg, reply, sid);
+                    if (Events.Field(e, "reason") == "user_canceled") {
+                        pet.RetireClonesForSession(sid);
+                        pet.Play("failed", 1);
+                        pet.Say(w + " 被叫停了。", tg, BubbleKind.Speech, 4.0, false);
+                    } else {
+                        object idleObj;
+                        bool idle = !e.TryGetValue("fully_idle", out idleObj) || !(idleObj is bool) || (bool)idleObj;
+                        if (!idle && String.IsNullOrEmpty(ExtractGist(reply))) {
+                            pet.Say(w + " 在等后台任务……", tg, BubbleKind.Speech, 3.5, false);
+                        } else {
+                            NotifyDone(pet, w, tg, reply, sid, idle);
+                        }
+                    }
                     return;
                 }
                 case "StopFailure": {
@@ -371,6 +403,7 @@ namespace Gloria {
                     return;
                 }
                 case "SubagentStart": {
+                    s.Busy = true;
                     string aid = Events.Field(e, "agent_id");
                     if (aid == "") aid = Guid.NewGuid().ToString("N");
                     pet.SpawnClone(aid, sid);
@@ -597,8 +630,8 @@ namespace Gloria {
             }
         }
 
-        void NotifyDone(Pet pet, string w, string tg, string reply, string sid) {
-            pet.RetireClonesForSession(sid);
+        void NotifyDone(Pet pet, string w, string tg, string reply, string sid, bool retireClones = true) {
+            if (retireClones) pet.RetireClonesForSession(sid);
             // If another session on this same pet is still awaiting permission, keep showing `waiting`!
             if (pet.Awaiting != null) return;
             pet.Play("review", 1);
@@ -702,6 +735,20 @@ namespace Gloria {
                 case "Agent":
                     return "派出分身";
                 case "TodoWrite": return "在排计划";
+                case "update_focus": {
+                    string f = Events.Field(input, "focus");
+                    return String.IsNullOrEmpty(f) ? "在排计划" : Calc.Cap(f, 40);
+                }
+                case "generate_image": return "在画图";
+                case "manage_task":
+                case "command_status":
+                    return "在看后台任务";
+                case "run_workflow": return "在跑工作流";
+                case "swarm": return "在调度蜂群";
+                case "search_marketplace":
+                case "list_plugin_accounts":
+                    return "在查插件";
+                case "list_permissions": return "在查权限";
                 case "Delete": return String.IsNullOrEmpty(file) ? "在删文件" : ("在删 " + file);
                 case "run_code": return "在跑一段代码";
                 default:

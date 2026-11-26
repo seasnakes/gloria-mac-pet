@@ -123,7 +123,110 @@ namespace Gloria {
                     if (acts.Count > 0) return new CUParsed { Actions = acts };
                 }
             }
+
+            // Antigravity browser tools (`browser_*`, `*_browser_*`) and Chrome DevTools / Playwright MCP tools.
+            var br = ParseBrowser(t, input);
+            if (br != null) return br;
             return null;
+        }
+
+        static CUParsed ParseBrowser(string t, Dictionary<string, object> input) {
+            string action;
+            string appHint = null;
+            if (t.StartsWith("mcp__chrome-devtools__")) {
+                action = t.Substring("mcp__chrome-devtools__".Length);
+                appHint = "chrome";
+            } else if (t.StartsWith("mcp__chrome_devtools__")) {
+                action = t.Substring("mcp__chrome_devtools__".Length);
+                appHint = "chrome";
+            } else if (t.StartsWith("mcp__playwright__")) {
+                action = t.Substring("mcp__playwright__".Length);
+            } else if (t.StartsWith("browser_")) {
+                action = t.Substring("browser_".Length);
+            } else if (t.Contains("_browser_") || t.EndsWith("_browser")) {
+                action = t;
+            } else {
+                return null;
+            }
+            Point? pt = ReadCoord(input, "coordinate");
+            if (!pt.HasValue && input != null) {
+                object xo, yo;
+                if (input.TryGetValue("x", out xo) && input.TryGetValue("y", out yo) && xo != null && yo != null) {
+                    try { pt = new Point(Convert.ToDouble(xo), Convert.ToDouble(yo)); } catch { }
+                }
+            }
+            CUAction act = null;
+            switch (action) {
+                case "click":
+                case "click_pixel":
+                case "click_browser_pixel":
+                case "left_click":
+                    act = new CUAction { Kind = CUKind.Tap, Point1 = pt };
+                    break;
+                case "double_click":
+                case "dblclick":
+                    act = new CUAction { Kind = CUKind.Double, Point1 = pt };
+                    break;
+                case "right_click":
+                    act = new CUAction { Kind = CUKind.Right, Point1 = pt };
+                    break;
+                case "type":
+                case "type_text":
+                case "type_browser":
+                case "fill":
+                case "fill_form":
+                case "input":
+                case "enter_text": {
+                    int? count = null;
+                    object lenObj;
+                    if (input != null && input.TryGetValue("text_len", out lenObj) && lenObj != null) {
+                        try { count = Convert.ToInt32(lenObj); } catch { }
+                    }
+                    act = new CUAction { Kind = CUKind.Type, Point1 = pt, Count = count };
+                    break;
+                }
+                case "key":
+                case "press_key":
+                case "key_press":
+                case "press": {
+                    string k = Events.Field(input, "key");
+                    if (k == "") k = Events.Field(input, "text");
+                    act = new CUAction { Kind = CUKind.Key, Keys = PrettyKey(k) };
+                    break;
+                }
+                case "scroll":
+                case "scroll_page":
+                case "scroll_browser":
+                case "scroll_down":
+                case "scroll_up":
+                    act = new CUAction { Kind = CUKind.Scroll, Point1 = pt };
+                    break;
+                case "drag":
+                case "drag_drop":
+                case "drag_browser":
+                    act = new CUAction { Kind = CUKind.Drag, Point1 = pt };
+                    break;
+                case "screenshot":
+                case "take_screenshot":
+                case "capture_screenshot":
+                case "capture_browser_screenshot":
+                case "snapshot":
+                case "take_snapshot":
+                case "read_dom":
+                    act = new CUAction { Kind = CUKind.Snap };
+                    break;
+                case "navigate":
+                case "navigate_page":
+                case "open_url":
+                case "open_browser_url":
+                case "goto":
+                case "new_page":
+                case "open":
+                    act = new CUAction { Kind = CUKind.Open };
+                    break;
+            }
+            if (act == null) return null;
+            return new CUParsed { App = appHint, Actions = new List<CUAction> { act } };
         }
 
         internal static bool MovesPointer(string tool) {

@@ -10,6 +10,7 @@ $env:GLORIA_HOOK_HOME=Join-Path $testRoot home
 $env:CLAUDE_CONFIG_DIR=Join-Path $testRoot claude
 $env:CODEX_HOME=Join-Path $testRoot codex
 $env:DSH_HOME=Join-Path $testRoot dsh
+$env:ANTIGRAVITY_CONFIG_DIR=Join-Path $testRoot antigravity
 $app=Join-Path $bin 'GLORIA.exe'
 function Configure($source,$state,$expected=0) {
     $r=Start-Process -FilePath $app -ArgumentList @('--hooks',$source,$state) -PassThru -Wait
@@ -32,18 +33,18 @@ function Wait-Pose($id,$pose,$timeout=5) {
 try {
     Expand-Archive -LiteralPath $Zip -DestinationPath $bin
     $cmds=@{}
-    foreach($source in @('claude','codex','cursor','dsh')){
-        $folder=switch($source){claude{$env:CLAUDE_CONFIG_DIR}codex{$env:CODEX_HOME}cursor{Join-Path $env:GLORIA_HOOK_HOME '.cursor'}dsh{$env:DSH_HOME}}
+    foreach($source in @('claude','codex','cursor','dsh','antigravity')){
+        $folder=switch($source){claude{$env:CLAUDE_CONFIG_DIR}codex{$env:CODEX_HOME}cursor{Join-Path $env:GLORIA_HOOK_HOME '.cursor'}dsh{$env:DSH_HOME}antigravity{$env:ANTIGRAVITY_CONFIG_DIR}}
         $file=if($source -eq 'claude'){Join-Path $folder 'settings.json'}else{Join-Path $folder 'hooks.json'}
         $null=New-Item -Type Directory $folder -Force
-        $fixture=if($source -eq 'cursor'){'{"version":1,"hooks":{"stop":[{"command":"keep-me"}]}}'}else{'{"custom":"keep","hooks":{"Stop":[{"matcher":"custom","hooks":[{"type":"command","command":"keep-me"}]}]}}'}
+        $fixture=if($source -eq 'cursor'){'{"version":1,"hooks":{"stop":[{"command":"keep-me"}]}}'}elseif($source -eq 'antigravity'){'{"keep-hook":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"keep-me"}]}]}}'}else{'{"custom":"keep","hooks":{"Stop":[{"matcher":"custom","hooks":[{"type":"command","command":"keep-me"}]}]}}'}
         [IO.File]::WriteAllText($file,$fixture)
         Configure $source on
         $first=[IO.File]::ReadAllText($file)
         Configure $source on
         if([IO.File]::ReadAllText($file) -ne $first){throw "Duplicated hooks: $source"}
         $cfg=$first | ConvertFrom-Json
-        $cmds[$source]=if($source -eq 'cursor'){$cfg.hooks.postToolUse[0]}else{$cfg.hooks.PreToolUse[0].hooks[0]}
+        $cmds[$source]=if($source -eq 'cursor'){$cfg.hooks.postToolUse[0]}elseif($source -eq 'antigravity'){$cfg.gloria.PreToolUse[0].hooks[0]}else{$cfg.hooks.PreToolUse[0].hooks[0]}
         Configure $source off
         $restored=([IO.File]::ReadAllText($file) | ConvertFrom-Json | ConvertTo-Json -Depth 12 -Compress)
         if($restored -cne $fixture){throw "Did not preserve settings: $source"}
@@ -102,9 +103,12 @@ public static class GloriaWindowsTest {
         Wait-Pose gloria work
         '{"hook_event_name":"PreToolUse","tool_name":"read"}' | & ([scriptblock]::Create('$input | '+$cmds.dsh.command))
         Wait-Pose grokbot work
+        $agOut = '{"hookEventName":"PreToolUse","conversationId":"ag1","toolCall":{"name":"read_file","args":{"Path":"README.md"}}}' | & ([scriptblock]::Create('$input | '+$cmds.antigravity.command))
+        if(($agOut | ConvertFrom-Json).decision -ne 'allow'){throw "Unexpected Antigravity hook stdout: $agOut"}
+        Wait-Pose fourteen work
         $again=Start-Process $app -PassThru
         if(!$again.WaitForExit(4000)){ $again.Kill();throw 'Second instance did not exit' }
-        Write-Host 'Four visible pets, hook routing and single instance checks passed.'
+        Write-Host 'Five visible pets, hook routing and single instance checks passed.'
     }
 } finally {
     if($process -and !$process.HasExited){$process.Kill();$process.WaitForExit()}

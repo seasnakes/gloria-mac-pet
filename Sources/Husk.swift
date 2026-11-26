@@ -1,7 +1,7 @@
 import AppKit
 import Darwin
 
-// Code / Husk mode, modelled on Capri's: Claude Code, Codex, Cursor and DSH call `GLORIA --hook <agent>` from their own hooks.
+// Code / Husk mode, modelled on Capri's: Claude Code, Codex, Cursor, DSH and Antigravity call `GLORIA --hook <agent>` from their own hooks.
 // The hook forwards a slimmed copy of the event over a private Unix socket; GLORIA only watches and never answers for them.
 
 enum Wire {
@@ -56,21 +56,31 @@ enum Wire {
 enum HookClient {
     static let keep = ["hook_event_name", "session_id", "cwd", "tool_name", "tool_input", "tool_use_id", "error", "is_interrupt",
                        "prompt", "message", "title", "notification_type", "last_assistant_message", "agent_id", "agent_type",
-                       "source", "reason", "trigger", "stop_hook_active", "final_status"]
+                       "source", "reason", "trigger", "stop_hook_active", "final_status", "fully_idle"]
     static let inputKeep = ["file_path", "file_paths", "path", "command", "cmd", "pattern", "url", "query", "description",
-                            "subagent_type", "notebook_path", "questions",
+                            "subagent_type", "notebook_path", "questions", "focus",
                             // computer use: Codex's cua_repl code, Claude's action / coordinates (typed text: only its length)
-                            "code", "title", "action", "coordinate", "start_coordinate", "scroll_direction", "key", "app"]
+                            "code", "title", "action", "coordinate", "start_coordinate", "scroll_direction", "key", "app", "x", "y"]
 
-    /// `GLORIA --hook claude|codex|cursor|dsh`: forward stdin's event and exit 0 quickly, printing nothing.
-    static func run(source: String) {
-        signal(SIGALRM) { _ in exit(0) }
+    /// `GLORIA --hook claude|codex|cursor|dsh|antigravity [EventName]`: forward stdin's event and exit 0 quickly.
+    /// Antigravity expects JSON on stdout (`{"decision":"allow"}` on PreToolUse/Stop delegates to default policy, never auto-approves).
+    static func run(source: String, eventHint: String? = nil) {
+        signal(SIGALRM) { _ in _exit(0) }
         alarm(3)
         signal(SIGPIPE, SIG_IGN)
+        let isAG = source == "antigravity"
+        var replyEvent = eventHint ?? ""
+        defer {
+            if isAG {
+                let out = (replyEvent == "PreToolUse" || replyEvent == "Stop") ? "{\"decision\":\"allow\"}\n" : "{}\n"
+                if let d = out.data(using: .utf8) { FileHandle.standardOutput.write(d) }
+            }
+        }
         let data = FileHandle.standardInput.readDataToEndOfFile()
         guard data.count < 8 * 1024 * 1024,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var evt = adapt(obj, source: source) else { return }
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if isAG { replyEvent = antigravityEventName(obj, hint: eventHint) }
+        guard var evt = adapt(obj, source: source, eventHint: eventHint) else { return }
         evt = slim(evt)
         evt["_source"] = source
         guard let body = try? JSONSerialization.data(withJSONObject: evt), let fd = Wire.connect() else { return }
@@ -135,8 +145,22 @@ enum HookClient {
                            "web_search": "WebSearch", "web_fetch": "WebFetch", "subagent": "Agent", "subagent_fork": "Agent",
                            "workflow": "TodoWrite", "todo": "TodoWrite"]
 
+    /// Antigravity's tool names (App 2.0 / IDE / CLI) → Claude's where they match.
+    static let antigravityTools = [
+        "view_file": "Read", "read_file": "Read", "view_file_outline": "Read", "view_code_item": "Read", "read_terminal": "Read",
+        "write_to_file": "Write", "write_file": "Write",
+        "replace_file_content": "Edit", "multi_replace_file_content": "Edit", "edit_file": "Edit",
+        "run_command": "Bash", "send_command_input": "Bash",
+        "grep_search": "Grep", "codebase_search": "Grep",
+        "find_by_name": "Glob", "list_dir": "Glob",
+        "search_web": "WebSearch", "read_url_content": "WebFetch", "view_content_chunk": "WebFetch",
+        "update_steps": "TodoWrite", "schedule": "TodoWrite",
+        "invoke_subagent": "Agent", "define_subagent": "Agent", "send_message": "Agent", "manage_subagents": "Agent",
+    ]
+
     /// Every agent's event in Claude Code's shape (Codex after Capri's adapter; DSH already speaks it through its hooks bridge).
-    static func adapt(_ e: [String: Any], source: String) -> [String: Any]? {
+    static func adapt(_ e: [String: Any], source: String, eventHint: String? = nil) -> [String: Any]? {
+        if source == "antigravity" { return antigravity(e, eventHint: eventHint) }
         guard e["hook_event_name"] is String else { return nil }
         if source == "cursor" { return cursor(e) }
         if source == "dsh" {
@@ -212,6 +236,185 @@ enum HookClient {
         }
         return o
     }
+
+    /// Infer the Antigravity lifecycle event from `hookEventName`, the CLI event hint, or payload shape.
+    static func antigravityEventName(_ e: [String: Any], hint: String?) -> String {
+        if let h = e["hookEventName"] as? String, !h.isEmpty { return h }
+        if let hint, !hint.isEmpty { return hint }
+        if e["terminationReason"] != nil || e["fullyIdle"] != nil || e["executionNum"] != nil { return "Stop" }
+        if e["toolCall"] != nil { return ((e["error"] as? String)?.isEmpty == false) ? "PostToolUse" : "PreToolUse" }
+        if e["invocationNum"] != nil { return "PreInvocation" }
+        return "SessionStart"
+    }
+
+    /// Antigravity (App 2.0, IDE, CLI): camelCase protojson payloads, PascalCase/camelCase tool args, transcriptPath on Stop.
+    static func antigravity(_ e: [String: Any], eventHint: String?) -> [String: Any]? {
+        let name = antigravityEventName(e, hint: eventHint)
+        var o: [String: Any] = [:]
+        let cid = (e["conversationId"] as? String) ?? (e["session_id"] as? String) ?? "default"
+        o["session_id"] = "antigravity:" + cid
+        o["cwd"] = (e["cwd"] as? String) ?? (e["workspacePaths"] as? [String])?.first
+
+        switch name {
+        case "SessionStart":
+            o["hook_event_name"] = "SessionStart"
+            o["source"] = "startup"
+            return o
+        case "PreInvocation":
+            o["hook_event_name"] = "PreInvocation"
+            o["prompt"] = (e["lastUserInput"] as? String) ?? ""
+            return o
+        case "PreToolUse", "PostToolUse":
+            let tc = e["toolCall"] as? [String: Any]
+            let rawTool = (tc?["name"] as? String) ?? (e["tool_name"] as? String) ?? ""
+            let lower = rawTool.lowercased()
+            let args = (tc?["args"] as? [String: Any]) ?? (e["tool_input"] as? [String: Any]) ?? [:]
+            let tid = (tc?["id"] as? String) ?? (e["stepIdx"].map { "step:\($0)" })
+            if let tid, !tid.isEmpty { o["tool_use_id"] = tid }
+            let err = (e["error"] as? String) ?? ""
+            if !err.isEmpty { o["error"] = err }
+
+            if name == "PreToolUse" {
+                if lower == "ask_question" {
+                    o["hook_event_name"] = "Notification"
+                    o["notification_type"] = "agent_needs_input"
+                    let q = ((args["questions"] as? [[String: Any]])?.first?["question"] as? String) ?? ""
+                    o["message"] = q.isEmpty ? "Antigravity 想问你几个问题。" : q
+                    return o
+                }
+                if lower == "ask_permission" {
+                    o["hook_event_name"] = "Notification"
+                    o["notification_type"] = "permission_prompt"
+                    let reason = (args["Reason"] as? String) ?? (args["reason"] as? String) ?? ""
+                    let action = (args["Action"] as? String) ?? (args["action"] as? String) ?? ""
+                    let target = (args["Target"] as? String) ?? (args["target"] as? String) ?? ""
+                    let desc = !reason.isEmpty ? reason : [action, target].filter { !$0.isEmpty }.joined(separator: " ")
+                    o["message"] = desc.isEmpty ? "需要你批准操作" : desc
+                    return o
+                }
+                if lower == "notify_user", (args["BlockedOnUser"] as? Bool) == true {
+                    o["hook_event_name"] = "Notification"
+                    o["notification_type"] = "agent_needs_input"
+                    o["message"] = (args["Message"] as? String) ?? "等待你的回复"
+                    return o
+                }
+                if lower == "invoke_subagent" {
+                    o["hook_event_name"] = "SubagentStart"
+                    o["agent_id"] = tid ?? UUID().uuidString
+                    let sub = (args["Subagents"] as? [[String: Any]])?.first
+                    let role = (args["Role"] as? String) ?? (args["TypeName"] as? String)
+                        ?? (sub?["Role"] as? String) ?? (sub?["TypeName"] as? String) ?? ""
+                    o["agent_type"] = role
+                    return o
+                }
+                if lower == "swarm", ((args["action"] as? String) ?? "").lowercased() == "add" {
+                    o["hook_event_name"] = "SubagentStart"
+                    let wname = (args["name"] as? String) ?? "swarm"
+                    o["agent_id"] = wname
+                    o["agent_type"] = wname
+                    return o
+                }
+            } else if err.isEmpty {
+                if lower == "swarm", ((args["action"] as? String) ?? "").lowercased() == "kill" {
+                    o["hook_event_name"] = "SubagentStop"
+                    if let wname = args["name"] as? String { o["agent_id"] = wname }
+                    return o
+                }
+                if lower == "manage_subagents" {
+                    let act = ((args["Action"] as? String) ?? "").lowercased()
+                    if act == "kill_all" {
+                        o["hook_event_name"] = "SubagentStop"
+                        return o
+                    }
+                    if act == "kill" {
+                        o["hook_event_name"] = "SubagentStop"
+                        if let first = (args["ConversationIds"] as? [String])?.first { o["agent_id"] = first }
+                        return o
+                    }
+                }
+            }
+
+            o["hook_event_name"] = name
+            let mappedTool: String
+            if let t = antigravityTools[lower] { mappedTool = t }
+            else if lower.hasPrefix("mcp__") { mappedTool = rawTool }
+            else if lower.hasPrefix("mcp_") { mappedTool = "mcp__" + rawTool.dropFirst(4) }
+            else if rawTool.contains(":") { mappedTool = "mcp__" + rawTool.replacingOccurrences(of: ":", with: "__") }
+            else { mappedTool = rawTool }
+            o["tool_name"] = mappedTool
+
+            var i: [String: Any] = [:]
+            if let fp = args["AbsolutePath"] ?? args["TargetFile"] ?? args["Path"] ?? args["file_path"] ?? args["path"] { i["file_path"] = fp }
+            if let cmd = args["CommandLine"] ?? args["command"] ?? args["cmd"] ?? args["Input"] { i["command"] = cmd }
+            if let pat = args["Query"] ?? args["Pattern"] ?? args["pattern"] {
+                i["pattern"] = pat
+            } else if let dir = (args["DirectoryPath"] as? String) ?? (args["SearchDirectory"] as? String), !dir.isEmpty {
+                i["pattern"] = dir.split(separator: "/").last.map(String.init) ?? dir
+            }
+            if let q = args["query"] ?? args["Query"] { i["query"] = q }
+            if let u = args["Url"] ?? args["url"] { i["url"] = u }
+            if let d = args["Description"] ?? args["toolSummary"] ?? args["description"] { i["description"] = d }
+            if let f = args["focus"] ?? args["Focus"] { i["focus"] = f }
+            if let st = args["TypeName"] ?? args["subagent_type"] { i["subagent_type"] = st }
+            if let k = args["key"] ?? args["Key"] { i["key"] = k }
+            if let act = args["action"] ?? args["Action"] { i["action"] = act }
+            if let coord = args["coordinate"] { i["coordinate"] = coord }
+            if let x = args["x"] ?? args["X"] { i["x"] = x }
+            if let y = args["y"] ?? args["Y"] { i["y"] = y }
+            if let txt = (args["text"] as? String) ?? (args["Text"] as? String) ?? (args["value"] as? String) ?? (args["Value"] as? String) {
+                i["text"] = txt
+            }
+            if !i.isEmpty { o["tool_input"] = i }
+            return o
+        case "Stop":
+            let reason = ((e["terminationReason"] as? String) ?? "").lowercased()
+            let err = (e["error"] as? String) ?? ""
+            if let idle = e["fullyIdle"] as? Bool { o["fully_idle"] = idle }
+            if !err.isEmpty || reason == "error" {
+                o["hook_event_name"] = "StopFailure"
+                o["error"] = err
+            } else {
+                o["hook_event_name"] = "Stop"
+                if reason == "user_canceled" || reason == "cancelled" || reason == "aborted" {
+                    o["reason"] = "user_canceled"
+                } else if let tp = e["transcriptPath"] as? String, let reply = lastAntigravityReply(transcriptPath: tp) {
+                    o["last_assistant_message"] = reply
+                }
+            }
+            return o
+        default:
+            return nil
+        }
+    }
+
+    /// Reads the tail of Antigravity's `transcript.jsonl` to grab the latest assistant reply for Stop bubbles.
+    static func lastAntigravityReply(transcriptPath: String) -> String? {
+        guard !transcriptPath.isEmpty else { return nil }
+        let path: String
+        if transcriptPath.hasPrefix("~/") {
+            path = FileManager.default.homeDirectoryForCurrentUser.path + "/" + transcriptPath.dropFirst(2)
+        } else {
+            path = transcriptPath
+        }
+        guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        guard size > 0 else { return nil }
+        let limit: UInt64 = 65536
+        if size > limit { try? fh.seek(toOffset: size - limit) } else { try? fh.seek(toOffset: 0) }
+        guard let data = try? fh.readToEnd(), let text = String(data: data, encoding: .utf8) else { return nil }
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
+            guard let lineData = raw.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
+            let kind = (obj["type"] as? String) ?? ""
+            if kind == "USER_INPUT" { break }
+            if kind == "PLANNER_RESPONSE", let content = obj["content"] as? String {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return String(trimmed.prefix(1200)) }
+            }
+        }
+        return nil
+    }
 }
 
 /// Listens on the Unix socket for hook events and control commands.
@@ -278,10 +481,11 @@ final class HuskServer {
 }
 
 /// Writes or removes GLORIA's entries in each agent's hook config, keeping everything else:
-///   Claude Code  ~/.claude/settings.json   ($CLAUDE_CONFIG_DIR)
-///   Codex        ~/.codex/hooks.json       ($CODEX_HOME; Codex asks once whether to trust them)
-///   Cursor       ~/.cursor/hooks.json      (the editor and cursor-agent; its own flat format, "version": 1)
-///   DSH          ~/.dsh/hooks.json         ($DSH_HOME; Claude Code's format, read by DSH's hooks bridge plugin)
+///   Claude Code  ~/.claude/settings.json     ($CLAUDE_CONFIG_DIR)
+///   Codex        ~/.codex/hooks.json         ($CODEX_HOME; Codex asks once whether to trust them)
+///   Cursor       ~/.cursor/hooks.json        (the editor and cursor-agent; its own flat format, "version": 1)
+///   DSH          ~/.dsh/hooks.json           ($DSH_HOME; Claude Code's format, read by DSH's hooks bridge plugin)
+///   Antigravity  ~/.gemini/config/hooks.json ($ANTIGRAVITY_CONFIG_DIR; named top-level hook specs, shared by App / IDE / CLI)
 enum HookInstaller {
     static let claudeEvents = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification",
                                "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "SessionEnd"]
@@ -292,9 +496,13 @@ enum HookInstaller {
     /// What DSH's bridges run (the official dsh-hooks-claude-code takes the first seven; the rest are ignored where unsupported).
     static let dshEvents = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SubagentStart", "SubagentStop",
                             "PostToolUseFailure", "SessionEnd"]
+    /// Antigravity lifecycle events (SessionStart / PreInvocation / Stop are flat arrays; PreToolUse / PostToolUse use matcher groups).
+    static let antigravityEvents = ["SessionStart", "PreInvocation", "PreToolUse", "PostToolUse", "Stop"]
+    private static let antigravityGrouped: Set<String> = ["PreToolUse", "PostToolUse"]
+    private static let antigravityHookName = "gloria"
 
     static func events(_ source: String) -> [String] {
-        ["codex": codexEvents, "cursor": cursorEvents, "dsh": dshEvents][source] ?? claudeEvents
+        ["codex": codexEvents, "cursor": cursorEvents, "dsh": dshEvents, "antigravity": antigravityEvents][source] ?? claudeEvents
     }
     /// Cursor lists hooks per event directly; the others wrap them in matcher groups ({"hooks": [...]}).
     private static func flat(_ source: String) -> Bool { source == "cursor" }
@@ -305,23 +513,27 @@ enum HookInstaller {
         if source == "codex", let d = dir("CODEX_HOME") { return d.appendingPathComponent("hooks.json") }
         if source == "claude", let d = dir("CLAUDE_CONFIG_DIR") { return d.appendingPathComponent("settings.json") }
         if source == "dsh", let d = dir("DSH_HOME") { return d.appendingPathComponent("hooks.json") }
+        if source == "antigravity", let d = dir("ANTIGRAVITY_CONFIG_DIR") { return d.appendingPathComponent("hooks.json") }
         let home = dir("GLORIA_HOOK_HOME") ?? FileManager.default.homeDirectoryForCurrentUser
         switch source {
         case "codex": return home.appendingPathComponent(".codex/hooks.json")
         case "cursor": return home.appendingPathComponent(".cursor/hooks.json")
         case "dsh": return home.appendingPathComponent(".dsh/hooks.json")
+        case "antigravity": return home.appendingPathComponent(".gemini/config/hooks.json")
         default: return home.appendingPathComponent(".claude/settings.json")
         }
     }
 
     static var exe: String { Bundle.main.executablePath ?? CommandLine.arguments[0] }
 
-    static func command(_ source: String) -> String {
-        "GLORIA_HUSK=1 '" + exe.replacingOccurrences(of: "'", with: "'\\''") + "' --hook " + source
+    static func command(_ source: String, event: String? = nil) -> String {
+        let suffix = (source == "antigravity" && event != nil) ? " \(event!)" : ""
+        return "GLORIA_HUSK=1 '" + exe.replacingOccurrences(of: "'", with: "'\\''") + "' --hook " + source + suffix
     }
 
     static func ours(_ cmd: String, _ source: String) -> Bool {
-        cmd.hasPrefix("GLORIA_HUSK=1 ") && cmd.hasSuffix("--hook " + source)
+        let tail = "--hook " + source
+        return cmd.hasPrefix("GLORIA_HUSK=1 ") && (cmd.hasSuffix(tail) || cmd.contains(tail + " "))
     }
 
     /// The hook entries under one event, whichever format the file uses.
@@ -330,15 +542,36 @@ enum HookInstaller {
         return flat(source) ? list : list.flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }
     }
 
+    private static func agEntries(_ value: Any?, event: String) -> [[String: Any]] {
+        let list = value as? [[String: Any]] ?? []
+        return antigravityGrouped.contains(event) ? list.flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] } : list
+    }
+
     /// true when every event has exactly our current command.
     static func installed(_ source: String) -> Bool {
-        guard let root = read(source).root, let hooks = root["hooks"] as? [String: Any] else { return false }
+        guard let root = read(source).root else { return false }
+        if source == "antigravity" {
+            guard let spec = root[antigravityHookName] as? [String: Any], (spec["enabled"] as? Bool) != false else { return false }
+            return antigravityEvents.allSatisfy { ev in
+                agEntries(spec[ev], event: ev).contains { ($0["command"] as? String) == command("antigravity", event: ev) }
+            }
+        }
+        guard let hooks = root["hooks"] as? [String: Any] else { return false }
         let want = command(source)
         return events(source).allSatisfy { name in entries(hooks[name], source).contains { ($0["command"] as? String) == want } }
     }
 
     static func anyOurs(_ source: String) -> Bool {
-        guard let root = read(source).root, let hooks = root["hooks"] as? [String: Any] else { return false }
+        guard let root = read(source).root else { return false }
+        if source == "antigravity" {
+            return root.values.contains { raw in
+                guard let spec = raw as? [String: Any] else { return false }
+                return spec.contains { ev, v in
+                    ev != "enabled" && agEntries(v, event: ev).contains { ours($0["command"] as? String ?? "", "antigravity") }
+                }
+            }
+        }
+        guard let hooks = root["hooks"] as? [String: Any] else { return false }
         return hooks.values.contains { v in entries(v, source).contains { ours($0["command"] as? String ?? "", source) } }
     }
 
@@ -362,44 +595,99 @@ enum HookInstaller {
         let (rootOpt, raw) = read(source)
         guard var root = rootOpt else { throw Failure.invalid("\(f.path) 不是有效的 JSON，没有改动。") }
         if raw == nil && !on { return }
-        if root["hooks"] != nil && !(root["hooks"] is [String: Any]) { throw Failure.invalid("\(f.path) 的 hooks 格式不对，没有改动。") }
-        var hooks = root["hooks"] as? [String: Any] ?? [:]
         let before = (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data()
 
-        // Take our old entries out (wherever the app was when it wrote them), leave everyone else's alone.
-        for (name, value) in hooks {
-            guard let list = value as? [[String: Any]] else { throw Failure.invalid("\(f.path) 的 \(name) 格式不对，没有改动。") }
-            var kept: [[String: Any]] = []
-            var removed = false
-            for g in list {
-                if flat(source) {
-                    if ours(g["command"] as? String ?? "", source) { removed = true } else { kept.append(g) }
-                    continue
+        if source == "antigravity" {
+            // Sweep any existing GLORIA entries across top-level named hooks, leaving other hooks and metadata intact.
+            for (hookName, rawSpec) in root {
+                guard var spec = rawSpec as? [String: Any] else { continue }
+                var specRemoved = false
+                for (evName, evVal) in spec where evName != "enabled" {
+                    guard let list = evVal as? [[String: Any]] else {
+                        if hookName == antigravityHookName { throw Failure.invalid("\(f.path) 的 \(hookName).\(evName) 格式不对，没有改动。") }
+                        continue
+                    }
+                    let grouped = antigravityGrouped.contains(evName)
+                    var kept: [[String: Any]] = []
+                    var removed = false
+                    for item in list {
+                        if !grouped {
+                            if ours(item["command"] as? String ?? "", "antigravity") { removed = true } else { kept.append(item) }
+                            continue
+                        }
+                        let inner = item["hooks"] as? [[String: Any]] ?? []
+                        let other = inner.filter { !ours($0["command"] as? String ?? "", "antigravity") }
+                        if other.count == inner.count { kept.append(item); continue }
+                        removed = true
+                        if !other.isEmpty { var r = item; r["hooks"] = other; kept.append(r) }
+                    }
+                    if removed {
+                        specRemoved = true
+                        if kept.isEmpty { spec.removeValue(forKey: evName) } else { spec[evName] = kept }
+                    }
                 }
-                let inner = g["hooks"] as? [[String: Any]] ?? []
-                let other = inner.filter { !ours($0["command"] as? String ?? "", source) }
-                if other.count == inner.count { kept.append(g); continue }
-                removed = true
-                if !other.isEmpty { var r = g; r["hooks"] = other; kept.append(r) }
-            }
-            if removed { if kept.isEmpty { hooks.removeValue(forKey: name) } else { hooks[name] = kept } }
-        }
-        if on {
-            for name in events(source) {
-                var list = hooks[name] as? [[String: Any]] ?? []
-                var entry: [String: Any] = ["command": command(source), "timeout": source == "claude" ? 10 : 3]
-                if source == "claude" { entry["async"] = true }
-                if flat(source) {
-                    list.append(entry)
-                } else {
-                    entry["type"] = "command"
-                    list.append(["hooks": [entry]])
+                if specRemoved {
+                    let hasEvents = spec.keys.contains { $0 != "enabled" }
+                    if !hasEvents { root.removeValue(forKey: hookName) } else { root[hookName] = spec }
                 }
-                hooks[name] = list
             }
-            if flat(source) && root["version"] == nil { root["version"] = 1 }
+            if on {
+                if root[antigravityHookName] != nil && !(root[antigravityHookName] is [String: Any]) {
+                    throw Failure.invalid("\(f.path) 的 \(antigravityHookName) 格式不对，没有改动。")
+                }
+                var spec = root[antigravityHookName] as? [String: Any] ?? [:]
+                spec.removeValue(forKey: "enabled")
+                for evName in antigravityEvents {
+                    var list = spec[evName] as? [[String: Any]] ?? []
+                    let entry: [String: Any] = ["type": "command", "command": command("antigravity", event: evName), "timeout": 3]
+                    if antigravityGrouped.contains(evName) {
+                        list.append(["matcher": "*", "hooks": [entry]])
+                    } else {
+                        list.append(entry)
+                    }
+                    spec[evName] = list
+                }
+                root[antigravityHookName] = spec
+            }
+        } else {
+            if root["hooks"] != nil && !(root["hooks"] is [String: Any]) { throw Failure.invalid("\(f.path) 的 hooks 格式不对，没有改动。") }
+            var hooks = root["hooks"] as? [String: Any] ?? [:]
+
+            // Take our old entries out (wherever the app was when it wrote them), leave everyone else's alone.
+            for (name, value) in hooks {
+                guard let list = value as? [[String: Any]] else { throw Failure.invalid("\(f.path) 的 \(name) 格式不对，没有改动。") }
+                var kept: [[String: Any]] = []
+                var removed = false
+                for g in list {
+                    if flat(source) {
+                        if ours(g["command"] as? String ?? "", source) { removed = true } else { kept.append(g) }
+                        continue
+                    }
+                    let inner = g["hooks"] as? [[String: Any]] ?? []
+                    let other = inner.filter { !ours($0["command"] as? String ?? "", source) }
+                    if other.count == inner.count { kept.append(g); continue }
+                    removed = true
+                    if !other.isEmpty { var r = g; r["hooks"] = other; kept.append(r) }
+                }
+                if removed { if kept.isEmpty { hooks.removeValue(forKey: name) } else { hooks[name] = kept } }
+            }
+            if on {
+                for name in events(source) {
+                    var list = hooks[name] as? [[String: Any]] ?? []
+                    var entry: [String: Any] = ["command": command(source), "timeout": source == "claude" ? 10 : 3]
+                    if source == "claude" { entry["async"] = true }
+                    if flat(source) {
+                        list.append(entry)
+                    } else {
+                        entry["type"] = "command"
+                        list.append(["hooks": [entry]])
+                    }
+                    hooks[name] = list
+                }
+                if flat(source) && root["version"] == nil { root["version"] = 1 }
+            }
+            if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
         }
-        if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
         let after = (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data()
         if after == before { return }
 
@@ -419,7 +707,7 @@ final class HuskBrain {
     /// The pet standing in for an agent (see Agents), and every pet on screen.
     var petFor: (String) -> Pet? = { _ in nil }
     var pets: () -> [Pet] = { [] }
-    struct Session { var source: String; var busy = false; var awaiting: String?; var lastTool = ""; var lastAt = now(); var reply = "" }
+    struct Session { var source: String; var busy = false; var awaiting: String?; var lastTool = ""; var lastPrompt = ""; var lastAt = now(); var reply = "" }
     private(set) var sessions: [String: Session] = [:]
     /// One agent waiting on another (Claude running `codex exec`, …), keyed by the caller's tool call.
     struct Link { let from: String; let to: String; let task: String; let at: Double }
@@ -464,7 +752,18 @@ final class HuskBrain {
             s.awaiting = nil
             pet.play(.jump)
             let p = (e["prompt"] as? String).map { cap($0, 26) } ?? ""
+            if !p.isEmpty { s.lastPrompt = p }
             pet.say(p.isEmpty ? "\(w) 接活了！" : "\(w) 接活了：「\(p)」", tag: tg, duration: 3.2)
+        case "PreInvocation":
+            let p = (e["prompt"] as? String).map { cap($0, 26) } ?? ""
+            let isNewTurn = !s.busy || (!p.isEmpty && p != s.lastPrompt)
+            s.busy = true
+            s.awaiting = nil
+            if isNewTurn {
+                if !p.isEmpty { s.lastPrompt = p }
+                pet.play(.jump)
+                pet.say(p.isEmpty ? "\(w) 接活了！" : "\(w) 接活了：「\(p)」", tag: tg, duration: 3.2)
+            }
         case "PreToolUse":
             s.busy = true
             s.lastTool = describe(tool, input)
@@ -492,7 +791,7 @@ final class HuskBrain {
             let type = e["notification_type"] as? String ?? ""
             let msg = e["message"] as? String ?? ""
             if type == "permission_prompt" || msg.lowercased().contains("permission") {
-                let what = s.lastTool.isEmpty ? cap(msg, 60) : asking(s.lastTool)
+                let what = (src == "antigravity" && !msg.isEmpty) ? cap(msg, 60) : (s.lastTool.isEmpty ? cap(msg, 60) : asking(s.lastTool))
                 s.awaiting = what
                 pet.say("\(w) 需要你批准：\(what)", tag: tg, kind: .alert, sticky: true)
                 if Prefs.chime { NSSound(named: "Glass")?.play() }
@@ -512,7 +811,19 @@ final class HuskBrain {
         case "Stop":
             s.busy = false
             s.awaiting = nil
-            done(pet, w, tg, e["last_assistant_message"] as? String ?? s.reply)
+            if (e["reason"] as? String) == "user_canceled" {
+                pet.retireClone(nil)
+                pet.play(.failed)
+                pet.say("\(w) 被叫停了。", tag: tg, duration: 4)
+            } else {
+                let idle = (e["fully_idle"] as? Bool) ?? true
+                let reply = e["last_assistant_message"] as? String ?? s.reply
+                if !idle && gist(reply).isEmpty {
+                    pet.say("\(w) 在等后台任务……", tag: tg, duration: 3.5)
+                } else {
+                    done(pet, w, tg, reply, retireClones: idle)
+                }
+            }
             s.reply = ""
         case "StopFailure":
             s.busy = false
@@ -521,6 +832,7 @@ final class HuskBrain {
             pet.play(.failed)
             pet.say("\(w) 出错停下了……", tag: tg, duration: 4)
         case "SubagentStart":
+            s.busy = true
             let id = e["agent_id"] as? String ?? UUID().uuidString
             pet.spawnClone(id)
             let kind = e["agent_type"] as? String ?? ""
@@ -626,8 +938,8 @@ final class HuskBrain {
     }
 
     /// The job is done: look it over, wave, and say what came of it.
-    private func done(_ pet: Pet, _ w: String, _ tg: String, _ reply: String) {
-        pet.retireClone(nil)
+    private func done(_ pet: Pet, _ w: String, _ tg: String, _ reply: String, retireClones: Bool = true) {
+        if retireClones { pet.retireClone(nil) }
         pet.play(.review)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak pet] in pet?.play(.wave, loops: 2) }
         let summary = gist(reply)
@@ -681,6 +993,15 @@ final class HuskBrain {
         case "WebSearch": return "在搜网页：\(cap((input["query"] as? String) ?? "", 30))"
         case "Task", "Agent": return "派出分身"
         case "TodoWrite": return "在排计划"
+        case "update_focus":
+            let f = (input["focus"] as? String) ?? ""
+            return f.isEmpty ? "在排计划" : cap(f, 40)
+        case "generate_image": return "在画图"
+        case "manage_task", "command_status": return "在看后台任务"
+        case "run_workflow": return "在跑工作流"
+        case "swarm": return "在调度蜂群"
+        case "search_marketplace", "list_plugin_accounts": return "在查插件"
+        case "list_permissions": return "在查权限"
         case "Delete": return file.isEmpty ? "在删文件" : "在删 \(file)"
         case "run_code": return "在跑一段代码"
         default:

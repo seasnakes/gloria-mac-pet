@@ -4,19 +4,20 @@
 
 # GLORIA · 桌宠
 
-**坐在窗口边陪你写代码的小桌宠。<br>平时跟着音乐跳舞，干活时替 Claude Code、Codex、Cursor 和 DSH 报信、传话、演 computer use。**
+**坐在窗口边陪你写代码的小桌宠。<br>平时跟着音乐跳舞，干活时替 Claude Code、Codex、Cursor、DSH 和 Antigravity 报信、传话、演 computer use。**
 
 <a href="#安装"><img src="https://img.shields.io/badge/macOS-14.2%2B-ff9ec8?style=flat-square&logo=apple&logoColor=white" alt="macOS 14.2+"></a>
 <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-b9a7f0?style=flat-square" alt="Apple Silicon + Intel">
 <img src="https://img.shields.io/badge/Swift-AppKit%20%2B%20SceneKit-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
 <a href="https://github.com/seasnakes/gloria-mac-pet/releases/latest"><img src="https://img.shields.io/badge/下载-DMG%20%7C%20Windows%20ZIP-7fd3f5?style=flat-square" alt="下载 Mac DMG 或 Windows ZIP"></a>
-<img src="https://img.shields.io/badge/version-0.9.0-7fd3f5?style=flat-square" alt="v0.9.0">
+<img src="https://img.shields.io/badge/version-0.10.0-7fd3f5?style=flat-square" alt="v0.10.0">
 <img src="https://img.shields.io/badge/联网-不需要-8fd19e?style=flat-square" alt="不联网">
 <a href="LICENSE"><img src="https://img.shields.io/badge/代码-MIT-f7c873?style=flat-square" alt="代码 MIT"></a><br>
-<a href="#四个-agent-的化身"><img src="https://img.shields.io/badge/Claude%20Code-化身-D97757?style=flat-square&logo=claude&logoColor=white" alt="Claude Code 化身"></a>
-<a href="#四个-agent-的化身"><img src="https://img.shields.io/badge/Codex-化身-412991?style=flat-square&logo=openai&logoColor=white" alt="Codex 化身"></a>
-<a href="#四个-agent-的化身"><img src="https://img.shields.io/badge/Cursor-化身-2563EB?style=flat-square" alt="Cursor 化身"></a>
+<a href="#五个-agent-的化身"><img src="https://img.shields.io/badge/Claude%20Code-化身-D97757?style=flat-square&logo=claude&logoColor=white" alt="Claude Code 化身"></a>
+<a href="#五个-agent-的化身"><img src="https://img.shields.io/badge/Codex-化身-412991?style=flat-square&logo=openai&logoColor=white" alt="Codex 化身"></a>
+<a href="#五个-agent-的化身"><img src="https://img.shields.io/badge/Cursor-化身-2563EB?style=flat-square" alt="Cursor 化身"></a>
 <a href="#dsh"><img src="https://img.shields.io/badge/DSH-化身-5C6BC0?style=flat-square" alt="DSH 化身"></a>
+<a href="#五个-agent-的化身"><img src="https://img.shields.io/badge/Antigravity-化身-4285F4?style=flat-square&logo=google&logoColor=white" alt="Antigravity 化身"></a>
 <a href="#computer-use"><img src="https://img.shields.io/badge/computer%20use-会演-ff9ec8?style=flat-square" alt="computer use"></a><br>
 <a href="https://github.com/seasnakes/gloria-mac-pet/stargazers"><img src="https://img.shields.io/github/stars/seasnakes/gloria-mac-pet?style=flat-square&logo=github&color=ff9ec8&cacheSeconds=3600" alt="stars"></a>
 <a href="https://github.com/seasnakes/gloria-mac-pet/commits/main"><img src="https://img.shields.io/github/last-commit/seasnakes/gloria-mac-pet?style=flat-square&color=b9a7f0&cacheSeconds=3600" alt="last commit"></a>
@@ -61,20 +62,21 @@ GrokBot 不是预先渲好的序列帧，而是每帧实时画进它自己的透
 
 耳朵天线、鳍手、九种 LED 表情、悬浮环和短片里的 3D 光标都是模型本身的独立部件，由 App 实时摆动，动作之间平滑插值，不会跳帧。坐窗沿、被拎起来甩、跳舞、当 agent 化身、操作电脑，用的都是和其他角色同一套状态。鼠标点没点中它，直接用射线检测 3D 几何体。模型由 `characters/grokbot/export_grokbot.py` 从 Blender 工程导出，取完成造型那一帧，保留各部件轴心并烘焙修改器。
 
-## 四个 agent 的化身
+## 五个 agent 的化身
 
 <img src="docs/together.gif" width="585" alt="乌萨奇（Claude Code）把信封扔给 Doro（Codex），Doro 干完活再扔回来">
 
-现在能当化身的 agent 有四个，可以在菜单里给它们各挑一个角色，比如让乌萨奇当 Claude、Doro 当 Codex：
+现在能当化身的 agent 有五个，可以在菜单里给它们各挑一个角色，比如让乌萨奇当 Claude、Doro 当 Codex：
 
 - Claude Code，钩子写在 `~/.claude/settings.json`。
 - Codex，钩子写在 `~/.codex/hooks.json`。Codex 第一次启动时会问要不要信任这些钩子，选信任就行。
 - Cursor，钩子写在 `~/.cursor/hooks.json`，编辑器里的 Agent 和命令行的 `cursor-agent` 都算，新开一个对话就生效。`cursor-agent -p` 不发「开始/结束回合」事件，所以她以会话结束当作做完。
 - DSH（DeepSeek Harness），钩子写在 `~/.dsh/hooks.json`，配置方式见下一小节。
+- Antigravity，钩子写在 `~/.gemini/config/hooks.json`（顶层 `gloria` 钩子块），Antigravity App、Antigravity IDE 和命令行 `agy` 共用这一份配置，新开对话就生效。工具名（`view_file`、`edit_file`、`run_command`、`invoke_subagent`、`ask_question` 等）会翻成中文小字幕，完成时从 `transcript.jsonl` 末尾读出回复的第一句。
 
 接到任务时化身会跳一下，干活时摆思考动作，头顶小字幕实时报出正在读、改、跑什么。需要你批准时她会举牌提醒并一直挂着气泡；做完了会说出回复的第一句。如果派出了子代理，身边会跑出一个小分身，子代理结束时挥手消失。
 
-任意两个 agent 之间还能互相委托。比如 Claude 在命令行里跑 `codex exec "…"`、`cursor-agent -p "…"` 或 `dsh …`，或者反过来跑 `claude -p`，调用方的化身会走过去，把一个小信封扔给被调用方的化身。对方干活期间一直处在忙碌状态，干完再把信封扔回来。调用对方的 MCP 也算委托。
+任意两个 agent 之间还能互相委托。比如 Claude 在命令行里跑 `codex exec "…"`、`cursor-agent -p "…"`、`dsh …` 或 `agy -p "…"`，或者反过来跑 `claude -p`，调用方的化身会走过去，把一个小信封扔给被调用方的化身。对方干活期间一直处在忙碌状态，干完再把信封扔回来。调用对方的 MCP 也算委托。
 
 她们只看不动手，不会替你批准任何操作。
 
@@ -104,9 +106,9 @@ DSH 的工具名（`read` / `edit` / `pwsh` / `web_search` 等）会被翻成和
 
 ### 新电脑上要配置什么
 
-新电脑上第一次打开 GLORIA，她会检查这台 Mac 上有没有 `~/.claude`、`~/.codex`、`~/.cursor` 和 `~/.dsh`，弹一个窗口列出找到的 agent。勾上的就会自动装好钩子（改之前会先备份原文件），之后重开一次那个 agent 就生效，Cursor 新开一个对话就行。
+新电脑上第一次打开 GLORIA，她会检查这台 Mac 上有没有 `~/.claude`、`~/.codex`、`~/.cursor`、`~/.dsh` 和 `~/.gemini/config`（或 Antigravity 数据目录），弹一个窗口列出找到的 agent。勾上的就会自动装好钩子（改之前会先备份原文件），之后重开一次那个 agent 就生效，Cursor 和 Antigravity 新开一个对话就行。
 
-当时没装或者不想接的，以后随时在菜单「`<agent> 化身` › `接入`」里开关。除此之外，Claude Code、Codex 和 Cursor 里不需要额外配置；只有 DSH 需要装上面提到的插件。
+当时没装或者不想接的，以后随时在菜单「`<agent> 化身` › `接入`」里开关。除此之外，Claude Code、Codex、Cursor 和 Antigravity 里不需要额外配置；只有 DSH 需要装上面提到的插件。
 
 ## Computer use
 
@@ -124,6 +126,7 @@ Agent 操作电脑时，它的化身会跑到那个窗口上跟着比划。
 
 - Codex 在 `cua_repl` 里调用的 `getApp`、`click`、`typeText`、`pressKey`、`scroll`、`drag`、`getScreenshot` 和 `getAXState`。同一个会话后面的调用会沿用前面选中的 App。
 - Claude Code 的 computer use 工具（`left_click`、`type`、`key`、`screenshot`、`scroll`、`left_click_drag` 等），以及浏览器的 `computer` 工具。
+- Antigravity 的浏览器工具（`browser_*`）以及 Chrome DevTools / Playwright MCP 的点击、输入、按键、滚动、拖拽和截图调用。
 
 ## 平时在桌面上还会干什么
 
@@ -165,7 +168,7 @@ make dmg        # = bash build.sh --dmg：做出 dist/GLORIA-<版本>.dmg（arm6
 <summary><b>菜单一览</b></summary>
 
 - 角色：勾选谁出场，可以多选（导入的 dsh-pet 宠物也在这里）
-- Claude Code 化身 / Codex 化身 / Cursor 化身 / DeepSeek Harness 化身：接入（装钩子）、由谁来当
+- Claude Code 化身 / Codex 化身 / Cursor 化身 / DeepSeek Harness 化身 / Antigravity 化身：接入（装钩子）、由谁来当
 - 需要批准时提示音 · 叫她们过来 · 移到显示器（有多块屏幕时） · 躲到屏幕边上偷看 · 大小 · 自己溜达 · 闲着会打盹 · 追光标 · 拖到屏幕左右边缘会躲起来探头 · 登录时启动
 - 随音乐跳舞 · 跟着节拍 · 浏览器里的音乐也跳
 - 演示：跳舞 16 秒 / Claude Code 一轮工作 / Claude 请 Codex 帮忙 / Codex 操作电脑 / 被扔出去 / 被拎起来晃一晃 / 打个盹 10 秒
@@ -177,16 +180,17 @@ make dmg        # = bash build.sh --dmg：做出 dist/GLORIA-<版本>.dmg（arm6
 <details>
 <summary><b>化身钩子会改哪些文件</b></summary>
 
-接入时会改写下面四个文件里的对应配置：
+接入时会改写下面五个文件里的对应配置：
 
 - Claude Code：`~/.claude/settings.json`
 - Codex：`~/.codex/hooks.json`
 - Cursor：`~/.cursor/hooks.json`
 - DSH：`~/.dsh/hooks.json`
+- Antigravity：`~/.gemini/config/hooks.json`（写进顶层 `gloria` 块，App / IDE / CLI 共用）
 
 每次只增删 GLORIA 自己的条目，其他设置和钩子都保留。改之前会把原文件备份到 `~/Library/Application Support/GLORIA/hook-backups/`；改完后文件会重新排版，键按字母排序。
 
-钩子命令是 `GLORIA_HUSK=1 '<GLORIA.app>/Contents/MacOS/GLORIA' --hook claude|codex|cursor|dsh`。它通过私有 Unix 套接字转发精简后的事件，耗时约 10 ms，不输出任何内容；GLORIA 没开时直接退出。computer use 的调用只转发动作和坐标，打的字只转发字数。挪动了 App 之后重新打开一次，钩子会自动指向新位置。
+钩子命令是 `GLORIA_HUSK=1 '<GLORIA.app>/Contents/MacOS/GLORIA' --hook claude|codex|cursor|dsh|antigravity [事件名]`。它通过私有 Unix 套接字转发精简后的事件，耗时约 10 ms；GLORIA 没开时直接退出（Antigravity 的钩子按协议在 stdout 返回 `{"decision":"allow"}` 或 `{}`，只放行给默认权限策略、从不代为自动批准）。computer use 的调用只转发动作和坐标，打的字只转发字数。挪动了 App 之后重新打开一次，钩子会自动指向新位置。
 
 </details>
 
@@ -195,7 +199,7 @@ make dmg        # = bash build.sh --dmg：做出 dist/GLORIA-<版本>.dmg（arm6
 
 ```bash
 X=/Applications/GLORIA.app/Contents/MacOS/GLORIA
-$X --hooks claude|codex|cursor|dsh on|off                 # 同菜单开关
+$X --hooks claude|codex|cursor|dsh|antigravity on|off     # 同菜单开关
 $X --render-sheet <角色 id> <输出.png> [倍数]             # 导出整张精灵图（3D 的 GrokBot 按姿势逐格渲染，放大不糊）
 $X --ctl '{"ctl":"status"}'                               # 所有角色的状态（JSON）
 $X --ctl '{"ctl":"show","id":"grokbot","on":true}'        # 放出 / 收起角色：gloria / doro / usagi / grokbot / 导入的名字
@@ -249,7 +253,7 @@ make app
 <details>
 <summary><b>已知限制</b></summary>
 
-- 委托只认命令行里直接写出的 `codex` / `claude` / `cursor-agent` / `dsh` 调用。套在脚本里间接调用的认不出来。
+- 委托只认命令行里直接写出的 `codex` / `claude` / `cursor-agent` / `dsh` / `agy` 调用。套在脚本里间接调用的认不出来。
 - Codex 的 computer use 坐标按窗口内的坐标换算到屏幕上。窗口截图被缩放过时，落点会有偏差。Claude Code 的桌面点击会在真实光标停下的地方泛起波纹。
 - DSH 的钩子不带回复内容，所以 DSH 做完时她只说「做完啦」，不复述回复的第一句。
 - `dsh-pet` 导入只转换 `.webm`。只有 `.mov` 素材的宠物要先转成 webm。
